@@ -98,9 +98,19 @@ io.use((socket, next) => {
   }
 });
 
+// Track which users are currently connected.
+// Map: userId (number) → Set of socketIds
+// A user may have the app open in multiple tabs — only mark Offline when ALL tabs close.
+const onlineUsers = new Map();
+
 io.on('connection', (socket) => {
   const u = socket.user;
   console.log(`💬  Chat connected: ${u.name}`);
+
+  // ── Presence: add this socket to the user's active set ──────
+  if (!onlineUsers.has(u.id)) onlineUsers.set(u.id, new Set());
+  onlineUsers.get(u.id).add(socket.id);
+  io.emit('presence:update', [...onlineUsers.keys()]);
 
   // ── Send a chat message ──────────────────────────────────────
   // Client emits: { content: 'Hello team!' }
@@ -138,6 +148,13 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log(`💬  Chat disconnected: ${u.name}`);
+    // ── Presence: remove this socket; mark Offline only if all tabs closed ──
+    const sids = onlineUsers.get(u.id);
+    if (sids) {
+      sids.delete(socket.id);
+      if (sids.size === 0) onlineUsers.delete(u.id);
+    }
+    io.emit('presence:update', [...onlineUsers.keys()]);
   });
 });
 

@@ -216,6 +216,7 @@ export default function App() {
   const [resetPassModal, setResetPassModal] = useState(null); // { userId, userName, initials }
   const [dragId, setDragId]               = useState(null);
   const [unreadChat, setUnreadChat]        = useState(0);    // badge on Team Chat nav item
+  const [onlineUserIds, setOnlineUserIds]  = useState(new Set()); // real-time presence
 
   // ── Load all data from the API on mount ────────────────────
   const loadData = useCallback(async () => {
@@ -276,6 +277,14 @@ export default function App() {
     socket.on('chat:message', handler);
     return () => socket.off('chat:message', handler);
   }, [socket, view, authUser?.id]);
+
+  // ── Presence listener — tracks who is actually online right now ─
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (ids) => setOnlineUserIds(new Set(ids));
+    socket.on('presence:update', handler);
+    return () => socket.off('presence:update', handler);
+  }, [socket]);
 
   // goNav must be declared before any conditional returns (React Rules of Hooks)
   const goNav = useCallback((id) => {
@@ -508,13 +517,17 @@ export default function App() {
         })}
       </div>
       <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 6 }}>
+        <div
+          onClick={() => setMemberModal({ key: authUser?.initials, name: authUser?.name || '', email: authUser?.email || '', role: authUser?.job_title || '', status: authUser?.status || 'Online', ...(members[authUser?.initials] || {}) })}
+          style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 6, cursor: 'pointer' }}
+          title="View profile"
+        >
           <Avatar k={authUser?.initials || 'SO'} size={28} style={{ background: 'rgba(255,255,255,0.2)', color: '#fff' }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{authUser?.name?.split(' ')[0] || 'User'}</div>
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)' }}>{authUser?.job_title || authUser?.role}</div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)' }}>Profile</div>
           </div>
-          <div onClick={logout} title="Sign out" style={{ cursor: 'pointer', color: 'rgba(255,255,255,0.5)', flexShrink: 0 }}>
+          <div onClick={(e) => { e.stopPropagation(); logout(); }} title="Sign out" style={{ cursor: 'pointer', color: 'rgba(255,255,255,0.5)', flexShrink: 0 }}>
             <LogOut size={14} />
           </div>
         </div>
@@ -581,7 +594,7 @@ export default function App() {
     return (
     <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
       <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 22, fontWeight: 700, color: COLORS.charcoal, marginBottom: 4 }}>Good morning, {authUser?.name?.split(' ')[0] || 'there'} 👋</h1>
+        <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 22, fontWeight: 700, color: COLORS.charcoal, marginBottom: 4 }}>Hi, {authUser?.name?.split(' ')[0] || 'there'} 👋</h1>
         <p style={{ color: '#5A5860', fontSize: 12 }}>
           {weekCount > 0
             ? <>Here's what's happening across the data team today — <strong style={{ color: COLORS.burg }}>{weekCount} deadline{weekCount !== 1 ? 's' : ''}</strong> approaching this week.</>
@@ -912,7 +925,8 @@ export default function App() {
           const isSelf     = authUser?.initials === key;
           const reviewCnt  = tasks.filter(t => t.ass === key && t.status === 'review').length;
           const doneCnt    = tasks.filter(t => t.ass === key && t.status === 'done').length;
-          const statusPill = { Online: STATUS_PILLS.active, Away: STATUS_PILLS.review, 'In Meeting': STATUS_PILLS.planning, Focused: STATUS_PILLS.draft }[m.status] || STATUS_PILLS.planning;
+          const isOnline   = rawUser?.id ? onlineUserIds.has(rawUser.id) : false;
+          const statusPill = isOnline ? STATUS_PILLS.active : { bg: '#EBEAED', fg: '#848688' };
           return (
             <div key={key} style={{ background: '#fff', border: '1px solid #E2E0E5', borderRadius: 10, padding: 18, position: 'relative', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
 
@@ -943,7 +957,7 @@ export default function App() {
                   <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 14, fontWeight: 600, color: '#2A2829' }}>{m.name}</div>
                   <div style={{ fontSize: 11, color: '#918E98', marginTop: 2 }}>{m.role}</div>
                   <div style={{ display: 'flex', gap: 5, marginTop: 5, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 9, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: statusPill.bg, color: statusPill.fg }}>{m.status}</span>
+                    <span style={{ fontSize: 9, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: statusPill.bg, color: statusPill.fg }}>{isOnline ? 'Online' : 'Offline'}</span>
                     {/* Admin badge */}
                     {isAdmin && <span style={{ fontSize: 9, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: COLORS.burgDim, color: COLORS.burg }}>Admin</span>}
                   </div>

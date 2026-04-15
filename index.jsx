@@ -546,47 +546,91 @@ export default function App() {
   };
 
   /* ═══════ VIEWS ═══════ */
-  const DashboardView = () => (
+  const DashboardView = () => {
+    const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const parseTaskDate = (str) => {
+      if (!str) return null;
+      const m = str.match(/([A-Za-z]{3})\s+(\d{1,2})(?:,?\s*(\d{4}))?/);
+      if (!m) return null;
+      const mi = MONTH_ABBR.indexOf(m[1]);
+      const yr = m[3] ? parseInt(m[3]) : new Date().getFullYear();
+      return mi >= 0 ? new Date(yr, mi, parseInt(m[2])) : null;
+    };
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const getDueLabel = (str) => {
+      const d = parseTaskDate(str);
+      if (!d) return { label: str || '—', color: '#918E98' };
+      const diff = Math.round((d - today) / 864e5);
+      if (diff < 0)   return { label: 'Overdue',        color: COLORS.red };
+      if (diff === 0) return { label: 'Today',           color: COLORS.red };
+      if (diff === 1) return { label: 'Tomorrow',        color: COLORS.amber };
+      if (diff <= 7)  return { label: `In ${diff} days`, color: COLORS.amber };
+      return                 { label: str,               color: '#918E98' };
+    };
+    const upcoming = tasks
+      .filter(t => !['done', 'approved'].includes(t.status) && (t.due_date || t.due))
+      .map(t => { const due = t.due_date || t.due; return { ...t, _d: parseTaskDate(due), _due: due }; })
+      .filter(t => t._d)
+      .sort((a, b) => a._d - b._d)
+      .slice(0, 5);
+    const weekCount = upcoming.filter(t => {
+      const diff = Math.round((t._d - today) / 864e5);
+      return diff >= 0 && diff <= 7;
+    }).length;
+
+    return (
     <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 22, fontWeight: 700, color: COLORS.charcoal, marginBottom: 4 }}>Good morning, {authUser?.name?.split(' ')[0] || 'there'} 👋</h1>
-        <p style={{ color: '#5A5860', fontSize: 12 }}>Here's what's happening across the data team today — <strong style={{ color: COLORS.burg }}>3 deadlines</strong> approaching this week.</p>
+        <p style={{ color: '#5A5860', fontSize: 12 }}>
+          {weekCount > 0
+            ? <>Here's what's happening across the data team today — <strong style={{ color: COLORS.burg }}>{weekCount} deadline{weekCount !== 1 ? 's' : ''}</strong> approaching this week.</>
+            : <>Here's what's happening across the data team today. No deadlines due this week.</>}
+        </p>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
-        <StatCard label="Ongoing Projects" value={activeProjects} delta="↑ 2 from last month" up />
-        <StatCard label="Open Tasks" value={openTasks} delta="↑ 4 overdue" />
-        <StatCard label="Completed Projects" value={doneTasks} delta="↑ 18% vs last month" up />
-        <StatCard label="Team Utilization" value="82%" delta="Healthy range" up />
+        <StatCard label="Ongoing Projects" value={activeProjects} delta={activeProjects > 0 ? `${activeProjects} active` : 'None yet'} up={activeProjects > 0} />
+        <StatCard label="Open Tasks" value={openTasks} delta={openTasks > 0 ? `${openTasks} in progress` : 'All clear'} up={openTasks === 0} />
+        <StatCard label="Completed Tasks" value={doneTasks} delta={doneTasks > 0 ? `${doneTasks} done` : 'None yet'} up={doneTasks > 0} />
+        <StatCard label="Team Members" value={Object.keys(members).length} delta="Active" up />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
         <Panel title="Ongoing Projects" action="View all →" actionClick={() => goNav('projects')}>
-          {projects.slice(0, 5).map(p => (
-            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #E2E0E5', cursor: 'pointer' }}>
-              <div style={{ width: 3, height: 32, borderRadius: 2, background: p.color, flexShrink: 0 }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, color: '#2A2829', marginBottom: 2 }}>{p.name}</div>
-                <div style={{ fontSize: 11, color: '#918E98' }}>{p.tags.join(' • ')}</div>
+          {projects.length === 0
+            ? <p style={{ fontSize: 12, color: '#918E98', padding: '8px 0' }}>No projects yet. Create your first project to get started.</p>
+            : projects.slice(0, 5).map(p => (
+              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #E2E0E5', cursor: 'pointer' }}>
+                <div style={{ width: 3, height: 32, borderRadius: 2, background: p.color, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: '#2A2829', marginBottom: 2 }}>{p.name}</div>
+                  <div style={{ fontSize: 11, color: '#918E98' }}>{p.tags.join(' • ')}</div>
+                </div>
+                <div>
+                  <Pill status={p.status} />
+                  <div style={{ marginTop: 5 }}><ProgressBar pct={p.pct} color={p.color} width={80} /></div>
+                </div>
               </div>
-              <div>
-                <Pill status={p.status} />
-                <div style={{ marginTop: 5 }}><ProgressBar pct={p.pct} color={p.color} width={80} /></div>
-              </div>
-            </div>
-          ))}
+            ))
+          }
         </Panel>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Panel title="Upcoming Deadlines">
-            {[{ t: 'Power BI Inventory Dashboard', s: 'Data Analyst', d: 'Tomorrow', c: COLORS.red, dc: COLORS.red },
-              { t: 'Weekly Snapshot Report', s: 'Data Analyst', d: 'Mar 27', c: COLORS.amber, dc: COLORS.amber },
-              { t: 'Data Migration Phase 2', s: 'Data Engineer', d: 'Mar 28', c: COLORS.amber, dc: COLORS.amber },
-              { t: 'Process Automation Review', s: 'Data Team Lead', d: 'Apr 1', c: COLORS.blue, dc: '#918E98' }
-            ].map((item, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: i < 3 ? '1px solid #E2E0E5' : 'none' }}>
-                <div style={{ width: 6, height: 6, borderRadius: '50%', background: item.c, flexShrink: 0 }} />
-                <div style={{ flex: 1 }}><div style={{ fontSize: 12, color: '#2A2829', marginBottom: 2 }}>{item.t}</div><div style={{ fontSize: 11, color: '#918E98' }}>{item.s}</div></div>
-                <div style={{ fontSize: 11, fontWeight: 500, color: item.dc }}>{item.d}</div>
-              </div>
-            ))}
+            {upcoming.length === 0
+              ? <p style={{ fontSize: 12, color: '#918E98', padding: '8px 0' }}>No upcoming deadlines. Tasks with due dates will appear here.</p>
+              : upcoming.map((task, i) => {
+                  const { label, color } = getDueLabel(task._due);
+                  return (
+                    <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: i < upcoming.length - 1 ? '1px solid #E2E0E5' : 'none' }}>
+                      <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, color: '#2A2829', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</div>
+                        <div style={{ fontSize: 11, color: '#918E98' }}>{MEMBER_NAMES[task.ass] || 'Unassigned'}</div>
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 500, color, flexShrink: 0 }}>{label}</div>
+                    </div>
+                  );
+                })
+            }
           </Panel>
           <Panel title="Quick Actions">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -616,6 +660,7 @@ export default function App() {
       </Panel>
     </div>
   );
+  };
 
   /* ── PROJECTS VIEW ── */
   const ProjectsView = () => (

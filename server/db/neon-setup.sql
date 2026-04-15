@@ -129,6 +129,16 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 );
 
 
+-- ── CHAT READ RECEIPTS ────────────────────────────────────────
+-- Tracks the last message each user has read — used to show
+-- "Seen" indicators and unread counts in the team chat.
+CREATE TABLE IF NOT EXISTS chat_last_read (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  message_id INTEGER,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+
 -- ============================================================
 -- SEED DATA
 -- All passwords are 'password123' — change after first login

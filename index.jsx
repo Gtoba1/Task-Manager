@@ -1233,15 +1233,23 @@ export default function App() {
   // Messages are saved to the database so history is preserved across sessions.
   // Desktop notifications fire when a new message arrives and this tab isn't active.
   const ChatView = () => {
-    const [messages, setMessages] = useState([]);
-    const [text, setText]         = useState('');
-    const [loading, setLoading]   = useState(true);
-    const bottomRef               = useRef(null); // used to auto-scroll to latest message
+    const [messages, setMessages]     = useState([]);
+    const [text, setText]             = useState('');
+    const [loading, setLoading]       = useState(true);
+    const [readStatus, setReadStatus] = useState([]); // [{ user_id, initials, last_message_id }]
+    const bottomRef                   = useRef(null); // used to auto-scroll to latest message
+
+    // Returns the list of OTHER users who have read message `msgId`
+    const getReaders = (msgId) =>
+      readStatus.filter(r => r.user_id !== authUser?.id && r.last_message_id >= msgId);
 
     // ── Load recent history on mount ───────────────────────────
     useEffect(() => {
       API.getChatHistory()
-        .then(res => setMessages(res.data.messages))
+        .then(res => {
+          setMessages(res.data.messages || []);
+          setReadStatus(res.data.read_status || []);
+        })
         .catch(err => console.error('Chat history error:', err.message))
         .finally(() => setLoading(false));
 
@@ -1266,6 +1274,20 @@ export default function App() {
       socket.on('chat:message', handler);
       return () => socket.off('chat:message', handler);
     }, [socket]);
+
+    // ── Listen for read-receipt updates ─────────────────────────
+    useEffect(() => {
+      if (!socket) return;
+      socket.on('chat:read_status', setReadStatus);
+      return () => socket.off('chat:read_status', setReadStatus);
+    }, [socket]);
+
+    // ── Auto-mark messages as read while this view is open ──────
+    // Fires whenever the message list changes (initial load + new arrivals)
+    useEffect(() => {
+      const lastId = messages.at?.(-1)?.id ?? messages[messages.length - 1]?.id;
+      if (lastId && socket) socket.emit('chat:read', { last_message_id: lastId });
+    }, [messages, socket]);
 
     // ── Auto-scroll to the bottom when messages change ──────────
     useEffect(() => {
@@ -1342,8 +1364,21 @@ export default function App() {
                   }}>
                     {item.content}
                   </div>
-                  <div style={{ fontSize: 10, color: '#C4C2C8', marginTop: 3, textAlign: isOwn(item) ? 'right' : 'left', marginLeft: isOwn(item) ? 0 : 4 }}>
-                    {fmt(item.created_at)}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3, justifyContent: isOwn(item) ? 'flex-end' : 'flex-start', marginLeft: isOwn(item) ? 0 : 4 }}>
+                    <span style={{ fontSize: 10, color: '#C4C2C8' }}>{fmt(item.created_at)}</span>
+                    {isOwn(item) && (() => {
+                      const readers = getReaders(item.id);
+                      return readers.length > 0 ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                          <span style={{ fontSize: 9, color: '#22A55A', fontWeight: 500 }}>Seen</span>
+                          {readers.map(r => (
+                            <Avatar key={r.user_id} k={r.initials} size={13} title={`Read by ${MEMBER_NAMES[r.initials] || r.initials}`} style={{ border: '1px solid #fff' }} />
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 9, color: '#C4C2C8' }}>✓ Sent</span>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>

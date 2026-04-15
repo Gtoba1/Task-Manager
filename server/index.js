@@ -62,22 +62,41 @@ app.use('/api/projects',      require('./routes/projects'));
 app.use('/api/tasks',         require('./routes/tasks'));
 app.use('/api/notifications', require('./routes/notifications'));
 
+// ── Auto-create chat_last_read table if it doesn't exist ─────
+// Tracks the last message each user has seen — used for read receipts.
+pool.query(`
+  CREATE TABLE IF NOT EXISTS chat_last_read (
+    user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    message_id INTEGER,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('chat_last_read table setup error:', err.message));
+
 // ── REST: Chat history ────────────────────────────────────────
-// Returns the last 50 messages so new joiners see recent history.
+// Returns the last 50 messages + current read status for all users.
 // Protected — requires a valid JWT token in the Authorization header.
 const { requireAuth } = require('./middleware/auth');
 app.get('/api/chat', requireAuth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT cm.id, cm.content, cm.created_at,
-              u.id AS user_id, u.name, u.initials, u.avatar_url
-       FROM chat_messages cm
-       JOIN users u ON u.id = cm.user_id
-       ORDER BY cm.created_at DESC
-       LIMIT 50`
-    );
-    // Return in chronological order (oldest first)
-    res.json({ messages: result.rows.reverse() });
+    const [msgResult, readResult] = await Promise.all([
+      pool.query(
+        `SELECT cm.id, cm.content, cm.created_at,
+                u.id AS user_id, u.name, u.initials, u.avatar_url
+         FROM chat_messages cm
+         JOIN users u ON u.id = cm.user_id
+         ORDER BY cm.created_at DESC
+         LIMIT 50`
+      ),
+      pool.query(
+        `SELECT clr.user_id, clr.message_id AS last_message_id, u.initials
+         FROM chat_last_read clr
+         JOIN users u ON u.id = clr.user_id`
+      ),
+    ]);
+    res.json({
+      messages:    msgResult.rows.reverse(),
+      read_status: readResult.rows,
+    });
   } catch (err) {
     console.error('GET /api/chat error:', err.message);
     res.status(500).json({ error: 'Failed to load messages.' });
@@ -135,6 +154,31 @@ io.on('connection', (socket) => {
       io.emit('chat:message', msg);
     } catch (err) {
       console.error('chat:send error:', err.message);
+    }
+  });
+
+  // ── Mark messages as read ────────────────────────────────────
+  // Client emits { last_message_id } when it opens the chat or receives a new message.
+  // Server upserts the user's read pointer and broadcasts the updated read list.
+  socket.on('chat:read', async ({ last_message_id }) => {
+    if (!last_message_id) return;
+    try {
+      await pool.query(
+        `INSERT INTO chat_last_read (user_id, message_id, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (user_id) DO UPDATE
+           SET message_id = GREATEST(chat_last_read.message_id, $2),
+               updated_at = NOW()`,
+        [u.id, last_message_id]
+      );
+      const result = await pool.query(
+        `SELECT clr.user_id, clr.message_id AS last_message_id, u.initials
+         FROM chat_last_read clr
+         JOIN users u ON u.id = clr.user_id`
+      );
+      io.emit('chat:read_status', result.rows);
+    } catch (err) {
+      console.error('chat:read error:', err.message);
     }
   });
 

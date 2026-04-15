@@ -497,7 +497,7 @@ export default function App() {
           if (item.section) return <div key={i} style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', padding: '10px 8px 6px', fontWeight: 500 }}>{item.section}</div>;
           const active = view === item.id;
           const Icon = item.icon;
-          const badgeVal = item.badge === 'camps' ? projects.length : item.badge === 'tasks' ? openTasks : item.badge === 'notifs' ? 3 : item.badge === 'chat' && unreadChat > 0 ? unreadChat : null;
+          const badgeVal = item.badge === 'camps' ? projects.length : item.badge === 'tasks' ? openTasks : item.badge === 'notifs' ? null : item.badge === 'chat' && unreadChat > 0 ? unreadChat : null;
           return (
             <div key={item.id} onClick={() => goNav(item.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', color: active ? '#fff' : 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 1, background: active ? 'rgba(255,255,255,0.18)' : 'transparent', fontWeight: active ? 500 : 400 }}>
               <Icon size={16} style={{ opacity: active ? 1 : 0.7 }} />
@@ -1164,22 +1164,49 @@ export default function App() {
 
   /* ── NOTIFICATIONS VIEW ── */
   const NotifsView = () => {
-    const notifs = [
-      { unread: true, text: <>Toluwalase completed <strong>Power BI Inventory Dashboard</strong> draft — ready for review.</>, time: '15 minutes ago' },
-      { unread: true, text: <>Sharon submitted <strong>Data Migration Phase 1 validation</strong> report. All checks passed.</>, time: '1 hour ago' },
-      { unread: true, text: <><strong>Deadline Tomorrow:</strong> Power BI Inventory Dashboard is due March 25.</>, time: '3 hours ago' },
-      { unread: false, text: <>John completed <strong>Weekly Snapshot ETL pipeline</strong> — automated run successful.</>, time: 'Yesterday, 4:30 PM' },
-      { unread: false, text: <>Deborah moved <strong>Customer Data Cleanup</strong> to Done. 4,200 records processed.</>, time: 'Yesterday, 2:15 PM' },
-    ];
+    const [notifs, setNotifs]   = useState([]);
+    const [loading, setLoading] = useState(true);
+    const unreadCount = notifs.filter(n => !n.is_read).length;
+
+    useEffect(() => {
+      API.getNotifications()
+        .then(res => setNotifs(res.data.notifications || []))
+        .catch(err => console.error('Failed to load notifications:', err.message))
+        .finally(() => setLoading(false));
+    }, []);
+
+    const handleMarkAllRead = async () => {
+      try {
+        await API.markAllRead();
+        setNotifs(ns => ns.map(n => ({ ...n, is_read: true })));
+      } catch (err) {
+        console.error('Mark all read failed:', err.message);
+      }
+    };
+
     return (
       <div style={{ flex: 1, overflowY: 'auto', padding: 20, maxWidth: 680 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}><h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal }}>Notifications</h2><span style={{ background: COLORS.burg, color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 20, padding: '1px 6px' }}>3</span><div style={{ marginLeft: 'auto' }}><Btn sm>Mark all read</Btn></div></div>
-        {notifs.map((n, i) => (
-          <div key={i}>
-            {i === 3 && <div style={{ height: 1, background: '#E2E0E5', margin: '10px 0' }} />}
-            <div style={{ display: 'flex', gap: 9, padding: '10px 12px', borderRadius: 6, background: n.unread ? COLORS.burgDim : 'transparent', cursor: 'pointer', marginBottom: 4 }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', background: n.unread ? COLORS.burg : 'transparent', flexShrink: 0, marginTop: 5 }} />
-              <div style={{ flex: 1 }}><div style={{ fontSize: 12, color: '#2A2829', marginBottom: 2, lineHeight: 1.4 }}>{n.text}</div><div style={{ fontSize: 10, color: '#918E98' }}>{n.time}</div></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal }}>Notifications</h2>
+          {unreadCount > 0 && <span style={{ background: COLORS.burg, color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 20, padding: '1px 6px' }}>{unreadCount}</span>}
+          <div style={{ marginLeft: 'auto' }}>
+            {unreadCount > 0 && <Btn sm onClick={handleMarkAllRead}>Mark all read</Btn>}
+          </div>
+        </div>
+        {loading ? (
+          <div style={{ fontSize: 13, color: '#918E98' }}>Loading…</div>
+        ) : notifs.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '48px 0', color: '#918E98' }}>
+            <Bell size={32} style={{ opacity: 0.3, display: 'block', margin: '0 auto 12px' }} />
+            <div style={{ fontSize: 14 }}>No notifications yet.</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>You'll see updates here when tasks are moved, assigned, or commented on.</div>
+          </div>
+        ) : notifs.map((n, i) => (
+          <div key={n.id || i} style={{ display: 'flex', gap: 9, padding: '10px 12px', borderRadius: 6, background: !n.is_read ? COLORS.burgDim : 'transparent', marginBottom: 4 }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: !n.is_read ? COLORS.burg : 'transparent', flexShrink: 0, marginTop: 5 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, color: '#2A2829', marginBottom: 2, lineHeight: 1.4 }}>{n.message}</div>
+              <div style={{ fontSize: 10, color: '#918E98' }}>{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</div>
             </div>
           </div>
         ))}

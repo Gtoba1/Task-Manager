@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
+import { BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 import { LayoutDashboard, FolderKanban, ListTodo, Users, CalendarDays, GitBranch, BarChart3, Bell, Search, Plus, X, ChevronLeft, ChevronRight, Pencil, Trash2, AlertCircle, LogOut, ShieldCheck, MessageSquare, Send } from "lucide-react";
 import { useAuth } from './src/AuthContext';
 import { useSocket, showDesktopNotification } from './src/SocketContext';
@@ -53,6 +53,29 @@ const AVATAR_URLS   = {};
 const DEPT_STYLES = { bu: { bg: COLORS.blueD, fg: COLORS.blue, label: 'BU' }, bg: { bg: COLORS.tealD, fg: COLORS.teal, label: 'BG' } };
 const STATUS_PILLS = { planning: { bg: COLORS.blueD, fg: COLORS.blue, label: 'Planning' }, active: { bg: COLORS.tealD, fg: COLORS.teal, label: 'Active' }, review: { bg: COLORS.amberD, fg: COLORS.amber, label: 'In Review' }, draft: { bg: COLORS.purpleD, fg: COLORS.purple, label: 'Draft' }, done: { bg: COLORS.greenD, fg: COLORS.green, label: 'Done' } };
 const PRIORITY_DOT = { h: COLORS.red, m: COLORS.amber, l: COLORS.green };
+
+// ── Date conversion helpers ───────────────────────────────────
+// The DB stores dates as free-form VARCHAR like "Apr 5, 2025".
+// input[type=date] works with ISO "YYYY-MM-DD". These two functions
+// bridge the gap so the calendar picker can pre-populate correctly.
+const _MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// "Apr 5" or "Apr 5, 2025" → "2025-04-05"  (for input[type=date])
+const toDateInput = (str) => {
+  if (!str) return '';
+  const m = str.match(/([A-Za-z]{3})\s+(\d{1,2})(?:,?\s*(\d{4}))?/);
+  if (!m) return '';
+  const mi = _MONTHS.indexOf(m[1]);
+  if (mi < 0) return '';
+  const yr = m[3] ? parseInt(m[3]) : new Date().getFullYear();
+  return `${yr}-${String(mi + 1).padStart(2,'0')}-${String(parseInt(m[2])).padStart(2,'0')}`;
+};
+// "2025-04-05" → "Apr 5, 2025"  (stored back to DB)
+const fromDateInput = (str) => {
+  if (!str) return '';
+  const [yr, mo, day] = str.split('-').map(Number);
+  if (!yr || !mo || !day) return '';
+  return `${_MONTHS[mo - 1]} ${day}, ${yr}`;
+};
 const COL_STAT = ['backlog', 'progress', 'review', 'approved', 'done'];
 const COL_LABELS = { backlog: 'Backlog', progress: 'In Progress', review: 'In Review', approved: 'Approved', done: 'Done' };
 const COL_DOT = { backlog: COLORS.gray, progress: COLORS.blue, review: COLORS.amber, approved: COLORS.purple, done: COLORS.green };
@@ -1138,42 +1161,170 @@ export default function App() {
   };
 
   /* ── REPORTS VIEW ── */
-  const trafficData = [{ m: 'Oct', v: 6 }, { m: 'Nov', v: 8 }, { m: 'Dec', v: 7 }, { m: 'Jan', v: 9 }, { m: 'Feb', v: 10 }, { m: 'Mar', v: 12 }];
-  const taskStatusData = COL_STAT.map(s => ({ name: COL_LABELS[s], value: tasks.filter(t => t.status === s).length }));
+  // Issue #7: All chart data now derived from live tasks/projects state.
+  // Removed: hardcoded trafficData, pipelineData, qualityData.
+  // Added: tasksByMonth (tasks grouped by due month), workloadData (tasks per assignee),
+  //        priorityData (tasks by priority level). Stat cards use real counts.
+
+  // Task Status Breakdown (pie) — already live, untouched
+  const taskStatusData   = COL_STAT.map(s => ({ name: COL_LABELS[s], value: tasks.filter(t => t.status === s).length }));
   const taskStatusColors = [COLORS.gray, COLORS.blue, COLORS.amber, COLORS.purple, COLORS.green];
-  const pipelineData = [{ name: 'ETL', v: 124 }, { name: 'Cleanup', v: 45 }, { name: 'Report', v: 38 }, { name: 'Migration', v: 28 }, { name: 'Automation', v: 18 }];
-  const pipelineColors = [COLORS.blue, COLORS.teal, COLORS.burg, COLORS.purple, COLORS.green];
-  const qualityData = Array.from({ length: 12 }, (_, i) => ({ w: `Wk ${i + 1}`, v: [91, 92, 90, 93, 92, 94, 93, 95, 94, 96, 95, 96.4][i] }));
-  const projProgressData = projects.map(p => ({ name: p.name.length > 22 ? p.name.slice(0, 22) + '…' : p.name, pct: p.pct, fill: p.color }));
+
+  // Project Progress (horizontal bar) — already live, untouched
+  const projProgressData = projects.map(p => ({
+    name: p.name.length > 22 ? p.name.slice(0, 22) + '…' : p.name,
+    pct:  p.pct,
+    fill: p.color,
+  }));
+
+  // Tasks by Due Month — last 6 calendar months, uses toDateInput helper to parse stored dates
+  const tasksByMonth = (() => {
+    const now = new Date();
+    return Array.from({ length: 6 }, (_, i) => {
+      const d  = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+      const yr = d.getFullYear();
+      const mo = d.getMonth(); // 0-indexed
+      return {
+        m: _MONTHS[mo],
+        v: tasks.filter(t => {
+          const ds = toDateInput(t.due || t.due_date || '');
+          if (!ds) return false;
+          const [y, m2] = ds.split('-').map(Number);
+          return y === yr && (m2 - 1) === mo;
+        }).length,
+      };
+    });
+  })();
+
+  // Team Workload — tasks per assignee (top 6 by task count)
+  const workloadData = (() => {
+    const map = {};
+    tasks.forEach(t => {
+      const who = t.assignee || 'Unassigned';
+      map[who] = (map[who] || 0) + 1;
+    });
+    return Object.entries(map)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 6)
+      .map(([name, v]) => ({ name, v }));
+  })();
+
+  // Tasks by Priority — Low / Medium / High / Critical
+  const _priorityFills = { Low: COLORS.teal, Medium: COLORS.blue, High: COLORS.amber, Critical: COLORS.burg };
+  const priorityData = ['Low', 'Medium', 'High', 'Critical'].map(p => ({
+    name: p,
+    v:    tasks.filter(t => (t.priority || '').toLowerCase() === p.toLowerCase()).length,
+    fill: _priorityFills[p] || COLORS.gray,
+  }));
+
+  // Stat card values — derived from real data, no hardcoded numbers
+  const _totalTasks     = tasks.length;
+  const _completedTasks = tasks.filter(t => t.status === 'done').length;
+  const _activeProjects = projects.filter(p => p.status === 'active').length;
+  const _inReviewTasks  = tasks.filter(t => t.status === 'review').length;
 
   const ReportsView = () => (
     <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
-      <div style={{ marginBottom: 20 }}><h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal, marginBottom: 4 }}>Reports & Analytics</h2><p style={{ color: '#5A5860', fontSize: 12 }}>Data team performance metrics — March 2025</p></div>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal, marginBottom: 4 }}>Reports & Analytics</h2>
+        {/* Subtitle is dynamic — shows current month/year instead of a hardcoded date */}
+        <p style={{ color: '#5A5860', fontSize: 12 }}>Live metrics from your tasks and projects — {new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}</p>
+      </div>
+
+      {/* ── Stat cards — all values come from live DB data ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
-        <StatCard label="Dashboards Delivered" value="12" delta="↑ 3 MoM" up />
-        <StatCard label="Data Pipelines Active" value="34" delta="↑ 6 MoM" up />
-        <StatCard label="Avg Query Performance" value="1.2s" delta="↓ 0.4s improved" up />
-        <StatCard label="Data Quality Score" value="96.4%" delta="↑ 1.8pp MoM" up />
+        <StatCard label="Total Tasks"     value={String(_totalTasks)}     delta={_completedTasks + ' completed'}                                           up={_completedTasks > 0} />
+        <StatCard label="Completed"       value={String(_completedTasks)} delta={_totalTasks > 0 ? Math.round(_completedTasks / _totalTasks * 100) + '% of total' : '0% of total'} up={_completedTasks > 0} />
+        <StatCard label="Active Projects" value={String(_activeProjects)} delta={projects.length + ' total projects'}                                       up={_activeProjects > 0} />
+        <StatCard label="In Review"       value={String(_inReviewTasks)}  delta={_inReviewTasks > 0 ? 'awaiting sign-off' : 'none pending'}                up={false} />
       </div>
+
+      {/* ── Row 1: Tasks by due month + Task status pie ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-        <Panel title="Dashboards Delivered — Last 6 Months"><div style={{ height: 220 }}>
-          <ResponsiveContainer><LineChart data={trafficData}><CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" /><XAxis dataKey="m" tick={{ fill: '#848688', fontSize: 11 }} /><YAxis tick={{ fill: '#848688', fontSize: 11 }} /><Tooltip /><Line type="monotone" dataKey="v" stroke={COLORS.burg} strokeWidth={2} dot={{ fill: COLORS.burg, r: 4 }} /></LineChart></ResponsiveContainer>
-        </div></Panel>
-        <Panel title="Task Status Breakdown"><div style={{ height: 220 }}>
-          <ResponsiveContainer><PieChart><Pie data={taskStatusData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={2} dataKey="value">{taskStatusData.map((_, i) => <Cell key={i} fill={taskStatusColors[i]} />)}</Pie><Legend wrapperStyle={{ fontSize: 11 }} /></PieChart></ResponsiveContainer>
-        </div></Panel>
+        {/* Replaces hardcoded "Dashboards Delivered" line chart with real task due-date distribution */}
+        <Panel title="Tasks by Due Month — Last 6 Months">
+          <div style={{ height: 220 }}>
+            <ResponsiveContainer>
+              <BarChart data={tasksByMonth}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
+                <XAxis dataKey="m" tick={{ fill: '#848688', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#848688', fontSize: 11 }} allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="v" name="Tasks" radius={[4, 4, 0, 0]} fill={COLORS.burg} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+
+        {/* Task Status Breakdown — unchanged, already live */}
+        <Panel title="Task Status Breakdown">
+          <div style={{ height: 220 }}>
+            <ResponsiveContainer>
+              <PieChart>
+                <Pie data={taskStatusData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={2} dataKey="value">
+                  {taskStatusData.map((_, i) => <Cell key={i} fill={taskStatusColors[i]} />)}
+                </Pie>
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
       </div>
+
+      {/* ── Row 2: Team workload + Tasks by priority ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-        <Panel title="Pipeline Runs by Type"><div style={{ height: 220 }}>
-          <ResponsiveContainer><BarChart data={pipelineData}><CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" /><XAxis dataKey="name" tick={{ fill: '#848688', fontSize: 11 }} /><YAxis tick={{ fill: '#848688', fontSize: 11 }} /><Tooltip /><Bar dataKey="v" radius={[4, 4, 0, 0]}>{pipelineData.map((_, i) => <Cell key={i} fill={pipelineColors[i]} />)}</Bar></BarChart></ResponsiveContainer>
-        </div></Panel>
-        <Panel title="Data Quality Trend — Weekly"><div style={{ height: 220 }}>
-          <ResponsiveContainer><LineChart data={qualityData}><CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" /><XAxis dataKey="w" tick={{ fill: '#848688', fontSize: 11 }} /><YAxis domain={[88, 100]} tick={{ fill: '#848688', fontSize: 11 }} /><Tooltip /><Line type="monotone" dataKey="v" stroke={COLORS.green} strokeWidth={2} dot={{ fill: COLORS.green, r: 3 }} /></LineChart></ResponsiveContainer>
-        </div></Panel>
+        {/* Replaces hardcoded "Pipeline Runs by Type" with real per-assignee task counts */}
+        <Panel title="Team Workload — Tasks per Member">
+          {workloadData.length === 0
+            ? <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#918E98', fontSize: 13 }}>No tasks assigned yet.</div>
+            : <div style={{ height: 220 }}>
+                <ResponsiveContainer>
+                  <BarChart data={workloadData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
+                    <XAxis dataKey="name" tick={{ fill: '#848688', fontSize: 11 }} />
+                    <YAxis tick={{ fill: '#848688', fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip />
+                    <Bar dataKey="v" name="Tasks" radius={[4, 4, 0, 0]} fill={COLORS.blue} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+          }
+        </Panel>
+
+        {/* Replaces hardcoded "Data Quality Trend" with real task priority breakdown */}
+        <Panel title="Tasks by Priority">
+          <div style={{ height: 220 }}>
+            <ResponsiveContainer>
+              <BarChart data={priorityData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
+                <XAxis dataKey="name" tick={{ fill: '#848688', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#848688', fontSize: 11 }} allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="v" name="Tasks" radius={[4, 4, 0, 0]}>
+                  {priorityData.map((d, i) => <Cell key={i} fill={d.fill} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
       </div>
-      <Panel title="Project Progress Overview"><div style={{ height: 200 }}>
-        <ResponsiveContainer><BarChart layout="vertical" data={projProgressData}><CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" /><XAxis type="number" domain={[0, 100]} tick={{ fill: '#848688', fontSize: 11 }} tickFormatter={v => v + '%'} /><YAxis type="category" dataKey="name" tick={{ fill: '#848688', fontSize: 11 }} width={160} /><Tooltip /><Bar dataKey="pct" radius={[0, 4, 4, 0]}>{projProgressData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar></BarChart></ResponsiveContainer>
-      </div></Panel>
+
+      {/* ── Row 3: Project progress — unchanged, already live ── */}
+      <Panel title="Project Progress Overview">
+        <div style={{ height: Math.max(200, projProgressData.length * 40 + 40) }}>
+          <ResponsiveContainer>
+            <BarChart layout="vertical" data={projProgressData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
+              <XAxis type="number" domain={[0, 100]} tick={{ fill: '#848688', fontSize: 11 }} tickFormatter={v => v + '%'} />
+              <YAxis type="category" dataKey="name" tick={{ fill: '#848688', fontSize: 11 }} width={160} />
+              <Tooltip formatter={v => v + '%'} />
+              <Bar dataKey="pct" name="Progress" radius={[0, 4, 4, 0]}>
+                {projProgressData.map((d, i) => <Cell key={i} fill={d.fill} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Panel>
     </div>
   );
 
@@ -1238,24 +1389,40 @@ export default function App() {
     const [text, setText]             = useState('');
     const [loading, setLoading]       = useState(true);
     const [readStatus, setReadStatus] = useState([]); // [{ user_id, initials, last_message_id }]
+    // Issue #6: track load error so the user sees a visible retry button
+    // instead of a silent empty state when the server is waking from sleep.
+    const [chatError, setChatError]   = useState(null);
     const bottomRef                   = useRef(null); // used to auto-scroll to latest message
 
     // Returns the list of OTHER users who have read message `msgId`
     const getReaders = (msgId) =>
       readStatus.filter(r => r.user_id !== authUser?.id && r.last_message_id >= msgId);
 
-    // ── Load recent history on mount ───────────────────────────
-    useEffect(() => {
+    // ── Load recent history — extracted so the Retry button can call it again ──
+    // Issue #6 fix: on failure set chatError state (visible in UI) instead of
+    // silently swallowing the error. This handles the Render free-tier cold-start
+    // delay where the server may be asleep when the user first logs in.
+    const loadHistory = () => {
+      setLoading(true);
+      setChatError(null);
       API.getChatHistory()
         .then(res => {
           setMessages(res.data.messages || []);
           setReadStatus(res.data.read_status || []);
         })
-        .catch(err => console.error('Chat history error:', err.message))
+        .catch(err => {
+          console.error('Chat history error:', err.message);
+          setChatError('Could not load messages. The server may be waking up — please try again in a moment.');
+        })
         .finally(() => setLoading(false));
 
       // Clear the unread badge while the chat view is open
       setUnreadChat(0);
+    };
+
+    // ── Load recent history on mount ───────────────────────────
+    useEffect(() => {
+      loadHistory();
     }, []);
 
     // ── Listen for new messages over the socket ─────────────────
@@ -1335,6 +1502,13 @@ export default function App() {
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           {loading ? (
             <div style={{ margin: 'auto', color: '#C4C2C8', fontSize: 13 }}>Loading messages…</div>
+          ) : chatError ? (
+            // Issue #6 fix: visible error + retry button instead of silent empty state
+            <div style={{ margin: 'auto', textAlign: 'center', color: '#918E98' }}>
+              <AlertCircle size={32} style={{ opacity: 0.4, marginBottom: 8, color: COLORS.amber }} />
+              <div style={{ fontSize: 13, marginBottom: 12, maxWidth: 280, lineHeight: 1.5 }}>{chatError}</div>
+              <button onClick={loadHistory} style={{ fontSize: 12, padding: '6px 16px', borderRadius: 6, border: `1px solid ${COLORS.burg}`, background: 'transparent', color: COLORS.burg, cursor: 'pointer' }}>Retry</button>
+            </div>
           ) : messages.length === 0 ? (
             <div style={{ margin: 'auto', textAlign: 'center', color: '#C4C2C8' }}>
               <MessageSquare size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
@@ -1553,67 +1727,217 @@ export default function App() {
   };
 
   /* ═══════ TASK MODAL FORM ═══════ */
+  // Used for both Create New Task and Edit Task.
+  // Changes vs original:
+  //   • Project dropdown now reads from live `projects` state (issue #1)
+  //   • Due Date uses input[type=date] → native calendar popup (issue #3)
+  //   • Date pre-populates correctly on edit — tries .due then .due_date (issue #5)
+  //   • Collaborators toggle section added directly in the modal (issues #1 & #4)
   const TaskModalForm = () => {
     const editing = taskModal?.id;
     const [form, setForm] = useState({
-      title: taskModal?.title || '', desc: taskModal?.desc || '', dept: taskModal?.dept || 'bu',
-      ass: taskModal?.ass || 'SO', pri: taskModal?.pri || 'm', due: taskModal?.due || '',
-      status: taskModal?.status || 'backlog', camp: taskModal?.camp || 'Data Migration', collabs: taskModal?.collabs || [],
+      title:   taskModal?.title  || '',
+      desc:    taskModal?.desc   || taskModal?.description || '',
+      dept:    taskModal?.dept   || 'bu',
+      ass:     taskModal?.ass    || Object.keys(MEMBER_NAMES)[0] || '',
+      pri:     taskModal?.pri    || 'm',
+      // toDateInput converts "Apr 5, 2025" → "2025-04-05" so the picker shows the existing date
+      due:     toDateInput(taskModal?.due || taskModal?.due_date || ''),
+      status:  taskModal?.status || 'backlog',
+      // Use live project name; fall back to first project in state
+      camp:    taskModal?.camp   || taskModal?.project_name || (projects[0]?.name || ''),
+      collabs: taskModal?.collabs || [],
     });
     const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+    // Toggle a collaborator pill on/off inside the form (not saved until Submit)
+    const toggleFormCollab = (initials) =>
+      upd('collabs', form.collabs.includes(initials)
+        ? form.collabs.filter(k => k !== initials)
+        : [...form.collabs, initials]);
+
+    const handleSubmit = () => {
+      if (!form.title.trim()) return;
+      // Convert ISO date back to "Apr 5, 2025" before saving to DB
+      const data = { ...form, due: fromDateInput(form.due) };
+      submitTask(editing ? { ...data, id: taskModal.id } : data);
+    };
+
     return (
-      <Modal open title={editing ? 'Edit Task' : 'Create New Task'} subtitle="Add a task to the board and assign it to the right team member."
+      <Modal open title={editing ? 'Edit Task' : 'Create New Task'}
+        subtitle="Fill in the details, assign it to a team member, and add collaborators."
         onClose={() => setTaskModal(null)}
-        footer={<><Btn onClick={() => setTaskModal(null)}>Cancel</Btn><Btn primary onClick={() => { if (!form.title.trim()) return; submitTask(editing ? { ...form, id: taskModal.id } : form); }}>{editing ? 'Save Changes' : 'Create Task'}</Btn></>}>
-        <FormField label="Task Title *"><input style={inputStyle} value={form.title} onChange={e => upd('title', e.target.value)} placeholder="e.g. Build DAX measures for sales report" /></FormField>
-        <FormField label="Description"><textarea style={{ ...inputStyle, minHeight: 72, resize: 'vertical' }} value={form.desc} onChange={e => upd('desc', e.target.value)} placeholder="What needs to be done?" /></FormField>
+        footer={<><Btn onClick={() => setTaskModal(null)}>Cancel</Btn><Btn primary onClick={handleSubmit}>{editing ? 'Save Changes' : 'Create Task'}</Btn></>}>
+
+        {/* Task title */}
+        <FormField label="Task Title *">
+          <input style={inputStyle} value={form.title} onChange={e => upd('title', e.target.value)} placeholder="e.g. Build DAX measures for sales report" />
+        </FormField>
+
+        {/* Description */}
+        <FormField label="Description">
+          <textarea style={{ ...inputStyle, minHeight: 72, resize: 'vertical' }} value={form.desc} onChange={e => upd('desc', e.target.value)} placeholder="What needs to be done?" />
+        </FormField>
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <FormField label="Project"><select style={inputStyle} value={form.camp} onChange={e => upd('camp', e.target.value)}>
-            {['Data Migration', 'Power BI Inventory Dashboard', 'Power BI Sales Dashboard', 'Power BI Customer Performance Dashboard', 'Weekly Snapshot', 'Process Automation', '—'].map(o => <option key={o} value={o}>{o}</option>)}
-          </select></FormField>
-          <FormField label="Department"><select style={inputStyle} value={form.dept} onChange={e => upd('dept', e.target.value)}><option value="bu">BU</option><option value="bg">BG</option></select></FormField>
-          <FormField label="Assigned To"><select style={inputStyle} value={form.ass} onChange={e => upd('ass', e.target.value)}>
-            {Object.entries(MEMBER_NAMES).map(([k, n]) => <option key={k} value={k}>{n} — {MEMBER_ROLES[k]}</option>)}
-          </select></FormField>
-          <FormField label="Priority"><select style={inputStyle} value={form.pri} onChange={e => upd('pri', e.target.value)}><option value="h">High</option><option value="m">Medium</option><option value="l">Low</option></select></FormField>
-          <FormField label="Due Date"><input style={inputStyle} value={form.due} onChange={e => upd('due', e.target.value)} placeholder="e.g. Apr 5" /></FormField>
-          <FormField label="Status"><select style={inputStyle} value={form.status} onChange={e => upd('status', e.target.value)}>
-            {COL_STAT.filter(s => s !== 'done').map(s => <option key={s} value={s}>{COL_LABELS[s]}</option>)}
-          </select></FormField>
+          {/* Project — live from DB via projects state, not hardcoded */}
+          <FormField label="Project">
+            <select style={inputStyle} value={form.camp} onChange={e => upd('camp', e.target.value)}>
+              <option value="">— No project —</option>
+              {projects.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+            </select>
+          </FormField>
+
+          {/* Department */}
+          <FormField label="Department">
+            <select style={inputStyle} value={form.dept} onChange={e => upd('dept', e.target.value)}>
+              <option value="bu">BU</option><option value="bg">BG</option>
+            </select>
+          </FormField>
+
+          {/* Assigned To — live from team members */}
+          <FormField label="Assigned To">
+            <select style={inputStyle} value={form.ass} onChange={e => upd('ass', e.target.value)}>
+              {Object.entries(MEMBER_NAMES).map(([k, n]) => (
+                <option key={k} value={k}>{n} — {MEMBER_ROLES[k]}</option>
+              ))}
+            </select>
+          </FormField>
+
+          {/* Priority */}
+          <FormField label="Priority">
+            <select style={inputStyle} value={form.pri} onChange={e => upd('pri', e.target.value)}>
+              <option value="h">High</option><option value="m">Medium</option><option value="l">Low</option>
+            </select>
+          </FormField>
+
+          {/* Due Date — type=date opens native calendar popup (issue #3) */}
+          <FormField label="Due Date">
+            <input type="date" style={inputStyle} value={form.due} onChange={e => upd('due', e.target.value)} />
+          </FormField>
+
+          {/* Status */}
+          <FormField label="Status">
+            <select style={inputStyle} value={form.status} onChange={e => upd('status', e.target.value)}>
+              {COL_STAT.filter(s => s !== 'done').map(s => <option key={s} value={s}>{COL_LABELS[s]}</option>)}
+            </select>
+          </FormField>
         </div>
+
+        {/* Collaborators — clickable pills, anyone except the assignee (issues #1 & #4) */}
+        <FormField label="Collaborators">
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+            {Object.keys(MEMBER_NAMES).filter(k => k !== form.ass).map(k => {
+              const tagged = form.collabs.includes(k);
+              return (
+                <div key={k} onClick={() => toggleFormCollab(k)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 5px', borderRadius: 20, background: tagged ? COLORS.burgDim : '#EBEAED', border: `1px solid ${tagged ? COLORS.burg : '#E2E0E5'}`, fontSize: 12, color: tagged ? COLORS.burg : '#5A5860', cursor: 'pointer', userSelect: 'none' }}>
+                  <Avatar k={k} size={16} />{MEMBER_NAMES[k]}
+                </div>
+              );
+            })}
+          </div>
+        </FormField>
       </Modal>
     );
   };
 
   /* ═══════ PROJECT MODAL FORM ═══════ */
+  // Changes vs original:
+  //   • Start Date and Due Date use input[type=date] → native calendar popup (issue #3)
+  //   • Dates pre-populate on edit — tries .start/.due then .start_date/.due_date (issue #5)
+  //   • Team Members replaced by toggle-pill multi-select instead of single Lead dropdown (issue #1)
   const ProjModalForm = () => {
     const editing = projModal?.id;
     const [form, setForm] = useState({
-      name: projModal?.name || '', desc: projModal?.desc || '', type: projModal?.type || 'Dashboard / Report',
-      status: projModal?.status || 'planning', start: projModal?.start || '', due: projModal?.due || '',
-      members: projModal?.members || ['SO'], pct: projModal?.pct || 0, tags: projModal?.tags || ['BU'],
+      name:    projModal?.name   || '',
+      desc:    projModal?.desc   || '',
+      type:    projModal?.type   || 'Dashboard / Report',
+      status:  projModal?.status || 'planning',
+      // toDateInput converts "Apr 1, 2025" → "2025-04-01" so the picker shows the existing date
+      start:   toDateInput(projModal?.start || projModal?.start_date || ''),
+      due:     toDateInput(projModal?.due   || projModal?.due_date   || ''),
+      // members is an array of initials; pre-populated from existing project data
+      members: projModal?.members || [],
+      pct:     projModal?.pct    || 0,
+      tags:    projModal?.tags   || [],
     });
     const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+    // Toggle a member pill on/off — multiple members allowed (issue #1)
+    const toggleMember = (initials) =>
+      upd('members', form.members.includes(initials)
+        ? form.members.filter(k => k !== initials)
+        : [...form.members, initials]);
+
+    const handleSubmit = () => {
+      if (!form.name.trim()) return;
+      // Convert ISO dates back to "Apr 1, 2025" format before saving to DB
+      const data = { ...form, start: fromDateInput(form.start), due: fromDateInput(form.due) };
+      submitProject(editing ? { ...data, id: projModal.id, color: projModal.color } : { ...data, open: 0 });
+    };
+
     return (
-      <Modal open title={editing ? 'Edit Project' : 'Launch New Project'} subtitle="Define project details, scope, team members and timeline."
+      <Modal open title={editing ? 'Edit Project' : 'Launch New Project'}
+        subtitle="Define project details, scope, team members and timeline."
         onClose={() => setProjModal(null)}
-        footer={<><Btn onClick={() => setProjModal(null)}>Cancel</Btn><Btn primary onClick={() => { if (!form.name.trim()) return; submitProject(editing ? { ...form, id: projModal.id, color: projModal.color } : { ...form, open: 0 }); }}>{editing ? 'Save Changes' : 'Launch Project'}</Btn></>}>
-        <FormField label="Project Name *"><input style={inputStyle} value={form.name} onChange={e => upd('name', e.target.value)} placeholder="e.g. Power BI Finance Dashboard" /></FormField>
-        <FormField label="Description / Goals"><textarea style={{ ...inputStyle, minHeight: 72, resize: 'vertical' }} value={form.desc} onChange={e => upd('desc', e.target.value)} /></FormField>
+        footer={<><Btn onClick={() => setProjModal(null)}>Cancel</Btn><Btn primary onClick={handleSubmit}>{editing ? 'Save Changes' : 'Launch Project'}</Btn></>}>
+
+        {/* Project name */}
+        <FormField label="Project Name *">
+          <input style={inputStyle} value={form.name} onChange={e => upd('name', e.target.value)} placeholder="e.g. Power BI Finance Dashboard" />
+        </FormField>
+
+        {/* Description */}
+        <FormField label="Description / Goals">
+          <textarea style={{ ...inputStyle, minHeight: 72, resize: 'vertical' }} value={form.desc} onChange={e => upd('desc', e.target.value)} />
+        </FormField>
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <FormField label="Project Type"><select style={inputStyle} value={form.type} onChange={e => upd('type', e.target.value)}>
-            {['Dashboard / Report', 'Data Migration', 'ETL Pipeline', 'Process Automation', 'Data Cleanup', 'Analytics'].map(o => <option key={o}>{o}</option>)}
-          </select></FormField>
-          <FormField label="Status"><select style={inputStyle} value={form.status} onChange={e => upd('status', e.target.value)}>
-            {['planning', 'active', 'review', 'draft'].map(s => <option key={s} value={s}>{STATUS_PILLS[s].label}</option>)}
-          </select></FormField>
-          <FormField label="Start Date"><input style={inputStyle} value={form.start} onChange={e => upd('start', e.target.value)} placeholder="e.g. Apr 1, 2025" /></FormField>
-          <FormField label="Due Date"><input style={inputStyle} value={form.due} onChange={e => upd('due', e.target.value)} placeholder="e.g. May 30, 2025" /></FormField>
-          <FormField label="Lead"><select style={inputStyle} value={form.members[0]} onChange={e => upd('members', [e.target.value])}>
-            {Object.entries(MEMBER_NAMES).map(([k, n]) => <option key={k} value={k}>{n}</option>)}
-          </select></FormField>
-          <FormField label={`Progress ${form.pct}%`}><input type="range" min={0} max={100} value={form.pct} onChange={e => upd('pct', parseInt(e.target.value))} style={{ width: '100%', accentColor: COLORS.burg }} /></FormField>
+          {/* Project type */}
+          <FormField label="Project Type">
+            <select style={inputStyle} value={form.type} onChange={e => upd('type', e.target.value)}>
+              {['Dashboard / Report','Data Migration','ETL Pipeline','Process Automation','Data Cleanup','Analytics'].map(o => <option key={o}>{o}</option>)}
+            </select>
+          </FormField>
+
+          {/* Status */}
+          <FormField label="Status">
+            <select style={inputStyle} value={form.status} onChange={e => upd('status', e.target.value)}>
+              {['planning','active','review','draft'].map(s => <option key={s} value={s}>{STATUS_PILLS[s].label}</option>)}
+            </select>
+          </FormField>
+
+          {/* Start Date — type=date opens native calendar popup (issue #3) */}
+          <FormField label="Start Date">
+            <input type="date" style={inputStyle} value={form.start} onChange={e => upd('start', e.target.value)} />
+          </FormField>
+
+          {/* Due Date — type=date opens native calendar popup (issue #3) */}
+          <FormField label="Due Date">
+            <input type="date" style={inputStyle} value={form.due} onChange={e => upd('due', e.target.value)} />
+          </FormField>
+
+          {/* Progress slider */}
+          <FormField label={`Progress — ${form.pct}%`}>
+            <input type="range" min={0} max={100} value={form.pct} onChange={e => upd('pct', parseInt(e.target.value))} style={{ width: '100%', accentColor: COLORS.burg }} />
+          </FormField>
         </div>
+
+        {/* Team Members — multi-select toggle pills (issue #1) */}
+        <FormField label="Team Members">
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+            {Object.keys(MEMBER_NAMES).map(k => {
+              const tagged = form.members.includes(k);
+              return (
+                <div key={k} onClick={() => toggleMember(k)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 5px', borderRadius: 20, background: tagged ? COLORS.burgDim : '#EBEAED', border: `1px solid ${tagged ? COLORS.burg : '#E2E0E5'}`, fontSize: 12, color: tagged ? COLORS.burg : '#5A5860', cursor: 'pointer', userSelect: 'none' }}>
+                  <Avatar k={k} size={16} />{MEMBER_NAMES[k]}
+                </div>
+              );
+            })}
+          </div>
+        </FormField>
       </Modal>
     );
   };

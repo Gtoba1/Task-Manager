@@ -4,6 +4,8 @@
 // - Members can only see projects they are assigned to
 
 const pool = require('../db/pool');
+// Issue #2: email notifications when members are added to a project
+const { sendEmail } = require('../utils/email');
 
 // ── Helper: fetch a single project with members and tags ──────
 // Uses subqueries to avoid the DISTINCT + JSON_AGG incompatibility in PostgreSQL
@@ -122,6 +124,38 @@ async function createProject(req, res) {
 
     const project = await fetchProject(projectId);
     res.status(201).json({ project });
+
+    // Issue #2: notify each added member by email (except the creator).
+    // Inner try-catch isolates email failures from the outer catch so we never
+    // attempt a second res.json() on an already-sent response.
+    try {
+      const memberIds = allMembers.filter(id => id !== req.user.id);
+      if (memberIds.length > 0) {
+        const memberRows = await pool.query(
+          'SELECT name, email FROM users WHERE id = ANY($1::int[])', [memberIds]
+        );
+        for (const member of memberRows.rows) {
+          if (!member.email) continue;
+          sendEmail({
+            to:      member.email,
+            subject: `You've been added to project: ${name}`,
+            text:    `Hi ${member.name},\n\n` +
+                     `${req.user.name} has added you to a project.\n\n` +
+                     `Project: ${name}\n` +
+                     (due_date ? `Due    : ${due_date}\n` : '') +
+                     `\nLog in to the Data Team Dashboard to view it.`,
+            html:    `<p>Hi <strong>${member.name}</strong>,</p>` +
+                     `<p><strong>${req.user.name}</strong> has added you to a project.</p>` +
+                     `<table style="border-collapse:collapse;font-size:14px">` +
+                     `<tr><td style="padding:4px 12px 4px 0;color:#666">Project</td><td><strong>${name}</strong></td></tr>` +
+                     (due_date ? `<tr><td style="padding:4px 12px 4px 0;color:#666">Due</td><td>${due_date}</td></tr>` : '') +
+                     `</table><p>Log in to the Data Team Dashboard to view it.</p>`,
+          });
+        }
+      }
+    } catch (emailErr) {
+      console.error('createProject email error (non-fatal):', emailErr.message);
+    }
 
   } catch (err) {
     console.error('createProject error:', err.message);

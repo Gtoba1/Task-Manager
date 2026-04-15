@@ -5,6 +5,8 @@
 
 const pool            = require('../db/pool');
 const { logActivity } = require('./commentController');
+// Issue #2: email notifications when a task is assigned or reassigned
+const { sendEmail }   = require('../utils/email');
 
 // ── Helper: fetch a single task with all its details ─────────
 async function fetchTask(taskId) {
@@ -136,6 +138,39 @@ async function createTask(req, res) {
     const task = await fetchTask(taskId);
     res.status(201).json({ task });
 
+    // Issue #2: notify the assignee by email.
+    // Wrapped in its own try-catch so email failures never trigger the outer
+    // catch, which would attempt a second res.json() on an already-sent response.
+    try {
+      if (assignee_id) {
+        const assigneeResult = await pool.query(
+          'SELECT name, email FROM users WHERE id = $1', [assignee_id]
+        );
+        const assignee = assigneeResult.rows[0];
+        if (assignee?.email) {
+          sendEmail({
+            to:      assignee.email,
+            subject: `You've been assigned a task: ${title}`,
+            text:    `Hi ${assignee.name},\n\n` +
+                     `${req.user.name} has assigned you a new task.\n\n` +
+                     `Task   : ${title}\n` +
+                     (description ? `Details: ${description}\n` : '') +
+                     (due_date    ? `Due    : ${due_date}\n`    : '') +
+                     `\nLog in to the Data Team Dashboard to view it.`,
+            html:    `<p>Hi <strong>${assignee.name}</strong>,</p>` +
+                     `<p><strong>${req.user.name}</strong> has assigned you a new task.</p>` +
+                     `<table style="border-collapse:collapse;font-size:14px">` +
+                     `<tr><td style="padding:4px 12px 4px 0;color:#666">Task</td><td><strong>${title}</strong></td></tr>` +
+                     (description ? `<tr><td style="padding:4px 12px 4px 0;color:#666">Details</td><td>${description}</td></tr>` : '') +
+                     (due_date    ? `<tr><td style="padding:4px 12px 4px 0;color:#666">Due</td><td>${due_date}</td></tr>` : '') +
+                     `</table><p>Log in to the Data Team Dashboard to view it.</p>`,
+          });
+        }
+      }
+    } catch (emailErr) {
+      console.error('createTask email error (non-fatal):', emailErr.message);
+    }
+
   } catch (err) {
     console.error('createTask error:', err.message);
     res.status(500).json({ error: 'Failed to create task.' });
@@ -190,6 +225,35 @@ async function updateTask(req, res) {
 
     const task = await fetchTask(id);
     res.json({ task });
+
+    // Issue #2: notify the new assignee if the assignment changed.
+    // Inner try-catch prevents email failures from hitting the outer catch
+    // (which would try to send a second response on an already-sent one).
+    try {
+      const oldAssigneeId = existing.rows[0].assignee_id;
+      if (assignee_id && assignee_id !== oldAssigneeId) {
+        const assigneeResult = await pool.query(
+          'SELECT name, email FROM users WHERE id = $1', [assignee_id]
+        );
+        const assignee = assigneeResult.rows[0];
+        if (assignee?.email) {
+          const taskTitle = title || existing.rows[0].title;
+          sendEmail({
+            to:      assignee.email,
+            subject: `You've been assigned a task: ${taskTitle}`,
+            text:    `Hi ${assignee.name},\n\n` +
+                     `${req.user.name} has assigned you a task.\n\n` +
+                     `Task: ${taskTitle}\n` +
+                     `\nLog in to the Data Team Dashboard to view it.`,
+            html:    `<p>Hi <strong>${assignee.name}</strong>,</p>` +
+                     `<p><strong>${req.user.name}</strong> has assigned you a task: <strong>${taskTitle}</strong></p>` +
+                     `<p>Log in to the Data Team Dashboard to view it.</p>`,
+          });
+        }
+      }
+    } catch (emailErr) {
+      console.error('updateTask email error (non-fatal):', emailErr.message);
+    }
 
   } catch (err) {
     console.error('updateTask error:', err.message);

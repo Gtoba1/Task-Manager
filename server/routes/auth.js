@@ -1,0 +1,20 @@
+// routes/auth.js
+// Auth endpoints — login, current user, forgot password, reset password.
+
+const router = require('express').Router();
+const { login, getMe, forgotPassword, resetPassword } = require('../controllers/authController');
+const { requireAuth } = require('../middleware/auth');
+
+// POST /api/auth/login            — public
+router.post('/login', login);
+
+// GET  /api/auth/me               — protected
+router.get('/me', requireAuth, getMe);
+
+// POST /api/auth/forgot-password  — public (user not logged in)
+router.post('/forgot-password', forgotPassword);
+
+// POST /api/auth/reset-password   — public (user not logged in, has token)
+router.post('/reset-password', resetPassword);
+
+module.exports = router;

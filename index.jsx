@@ -1,0 +1,1634 @@
+import { useState, useEffect, useCallback, useRef } from "react";
+import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
+import { LayoutDashboard, FolderKanban, ListTodo, Users, CalendarDays, GitBranch, BarChart3, Bell, Search, Plus, X, ChevronLeft, ChevronRight, Pencil, Trash2, AlertCircle, LogOut, ShieldCheck, MessageSquare, Send } from "lucide-react";
+import { useAuth } from './src/AuthContext';
+import { useSocket, showDesktopNotification } from './src/SocketContext';
+import * as API from './src/api';
+
+/* ═══════════════════════════════════════════════════════════════
+   ★  EASY CUSTOMISATION — non-developers start here
+   ───────────────────────────────────────────────────────────────
+   Change branding, colours, and app name from this one section.
+   No need to search through the rest of the file.
+   ═══════════════════════════════════════════════════════════════ */
+
+// ── Branding ─────────────────────────────────────────────────
+// LOGO: place your logo file in the /public/img/ folder, then
+//       update the path below (keep the leading slash).
+const BRAND = {
+  company:  'TD Africa',           // Company name (shown in sidebar & page title)
+  subtitle: 'Data Team',           // Subtitle shown under the logo
+  logo:     '/img/logo-white.png', // White logo used on dark backgrounds
+};
+
+// ── Colour scheme ─────────────────────────────────────────────
+// To change the main brand colour, update `burg` (primary) only.
+// Everything else updates automatically.
+// Tip: use a hex colour picker — try https://htmlcolorcodes.com
+const COLORS = {
+  burg:    '#8B1A2B',  // ← PRIMARY brand colour (dark burgundy) — change this to rebrand
+  burg2:   '#A52035',  // Slightly lighter shade — hover / active states
+  burgDim: '#F8EEF0',  // Very light tint — used for badges & highlights
+  // ── Supporting colours (no need to change these) ──────────
+  charcoal: '#363435', gray: '#848688',
+  teal: '#0E8C88',   tealD: '#E6F6F5',
+  blue: '#3A6FD8',   blueD: '#E8EFF9',
+  coral: '#D05A2A',  coralD: '#FBF0EB',
+  green: '#22A55A',  greenD: '#E8F7EF',
+  red: '#D63B3B',    redD: '#FCEAEA',
+  pink: '#C03A8A',   pinkD: '#FAE8F3',
+  purple: '#7A50D0', purpleD: '#F0EAF9',
+  amber: '#C88A18',  amberD: '#FBF4E6',
+};
+
+/* ═══════════════════════════════════════════════════════════════
+   END OF EASY CUSTOMISATION
+   ═══════════════════════════════════════════════════════════════ */
+const MEMBER_COLORS = { SO: { bg: COLORS.burgDim, fg: COLORS.burg }, TG: { bg: COLORS.blueD, fg: COLORS.blue }, SA: { bg: COLORS.tealD, fg: COLORS.teal }, JA: { bg: COLORS.purpleD, fg: COLORS.purple }, DO: { bg: COLORS.amberD, fg: COLORS.amber } };
+const MEMBER_NAMES  = { SO: 'Samuel', TG: 'Toluwalase', SA: 'Sharon', JA: 'John', DO: 'Deborah' };
+const MEMBER_ROLES  = { SO: 'Data Team Lead', TG: 'Data Analyst', SA: 'Data Analyst', JA: 'Data Engineer', DO: 'Data Analyst' };
+// Profile photo URLs — populated from the database on load, updated after uploads.
+// Keyed by initials (e.g. AVATAR_URLS['SO'] = '/uploads/avatars/3-17123456.jpg')
+const AVATAR_URLS   = {};
+const DEPT_STYLES = { bu: { bg: COLORS.blueD, fg: COLORS.blue, label: 'BU' }, bg: { bg: COLORS.tealD, fg: COLORS.teal, label: 'BG' } };
+const STATUS_PILLS = { planning: { bg: COLORS.blueD, fg: COLORS.blue, label: 'Planning' }, active: { bg: COLORS.tealD, fg: COLORS.teal, label: 'Active' }, review: { bg: COLORS.amberD, fg: COLORS.amber, label: 'In Review' }, draft: { bg: COLORS.purpleD, fg: COLORS.purple, label: 'Draft' }, done: { bg: COLORS.greenD, fg: COLORS.green, label: 'Done' } };
+const PRIORITY_DOT = { h: COLORS.red, m: COLORS.amber, l: COLORS.green };
+const COL_STAT = ['backlog', 'progress', 'review', 'approved', 'done'];
+const COL_LABELS = { backlog: 'Backlog', progress: 'In Progress', review: 'In Review', approved: 'Approved', done: 'Done' };
+const COL_DOT = { backlog: COLORS.gray, progress: COLORS.blue, review: COLORS.amber, approved: COLORS.purple, done: COLORS.green };
+
+const NAV_ITEMS = [
+  { section: 'Workspace' },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'projects', label: 'Projects', icon: FolderKanban, badge: 'camps' },
+  { id: 'tasks', label: 'Task Board', icon: ListTodo, badge: 'tasks' },
+  { id: 'team', label: 'Team', icon: Users },
+  { id: 'calendar', label: 'Calendar', icon: CalendarDays },
+  { id: 'timeline', label: 'Timeline', icon: GitBranch },
+  { id: 'chat', label: 'Team Chat', icon: MessageSquare, badge: 'chat' },
+  { section: 'Analytics' },
+  { id: 'reports', label: 'Reports', icon: BarChart3 },
+  { id: 'notifs', label: 'Notifications', icon: Bell, badge: 'notifs' },
+  // ── Admin section — only shown to users with role = 'admin' ──
+  // To add more admin-only items, add them here with adminOnly: true
+  { section: 'Admin', adminOnly: true },
+  { id: 'admin', label: 'Admin Panel', icon: ShieldCheck, adminOnly: true },
+];
+
+const VTITLES = { dashboard: 'Overview', projects: 'Project Management', tasks: 'Task Board', team: 'Data Team', calendar: 'Calendar', timeline: 'Project Timeline', reports: 'Reports & Analytics', notifs: 'Notifications', chat: 'Team Chat', admin: 'Admin Panel' };
+
+// NOTE: Static data removed — all data now loads from the database via the API.
+// See the loadData() function inside the App component below.
+
+/* ═══════ SMALL COMPONENTS ═══════ */
+// Avatar — shows a profile photo if one has been uploaded, otherwise initials.
+// The `k` prop is the member's initials (e.g. 'SO').
+// AVATAR_URLS[k] is populated by loadData() and updated after photo uploads.
+const Avatar = ({ k, size = 28, style = {} }) => {
+  const c       = MEMBER_COLORS[k] || { bg: '#EBEAED', fg: '#5A5860' };
+  const photoUrl = AVATAR_URLS[k];
+  const base     = { width: size, height: size, borderRadius: '50%', flexShrink: 0, ...style };
+  if (photoUrl) {
+    return (
+      <img
+        src={photoUrl} alt={k}
+        style={{ ...base, objectFit: 'cover', display: 'block' }}
+        // If the photo fails to load (e.g. file deleted), hide the broken image
+        onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+      />
+    );
+  }
+  return (
+    <div style={{ ...base, background: c.bg, color: c.fg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.38, fontWeight: 600, fontFamily: "'Syne',sans-serif" }}>
+      {k}
+    </div>
+  );
+};
+
+const Pill = ({ status }) => {
+  const s = STATUS_PILLS[status];
+  if (!s) return null;
+  return <span style={{ fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: s.bg, color: s.fg, whiteSpace: 'nowrap' }}>{s.label}</span>;
+};
+
+const DeptTag = ({ dept }) => {
+  const d = DEPT_STYLES[dept] || DEPT_STYLES.bu;
+  return <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 20, fontWeight: 500, background: d.bg, color: d.fg, display: 'inline-block', marginBottom: 7 }}>{d.label}</span>;
+};
+
+const Tag = ({ children }) => <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 20, background: '#EBEAED', color: '#918E98' }}>{children}</span>;
+
+const ProgressBar = ({ pct, color, width }) => (
+  <div style={{ background: '#F4F3F5', borderRadius: 4, height: 5, overflow: 'hidden', width: width || '100%' }}>
+    <div style={{ height: '100%', borderRadius: 4, width: `${pct}%`, background: color, transition: 'width 0.3s' }} />
+  </div>
+);
+
+const StatCard = ({ label, value, delta, up }) => (
+  <div style={{ background: '#fff', border: '1px solid #E2E0E5', borderRadius: 10, padding: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+    <div style={{ fontSize: 11, color: '#918E98', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>{label}</div>
+    <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 26, fontWeight: 700, color: COLORS.charcoal }}>{value}</div>
+    <div style={{ fontSize: 11, marginTop: 4, color: up ? COLORS.green : COLORS.red }}>{delta}</div>
+  </div>
+);
+
+const Panel = ({ title, action, actionClick, children }) => (
+  <div style={{ background: '#fff', border: '1px solid #E2E0E5', borderRadius: 10, padding: 18, boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+    {(title || action) && (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        {title && <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 600, color: COLORS.charcoal }}>{title}</div>}
+        {action && <div onClick={actionClick} style={{ fontSize: 12, color: '#918E98', cursor: 'pointer' }}>{action}</div>}
+      </div>
+    )}
+    {children}
+  </div>
+);
+
+const Modal = ({ open, onClose, title, subtitle, children, footer }) => {
+  if (!open) return null;
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, backdropFilter: 'blur(3px)' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', border: '1px solid #D0CDD5', borderRadius: 10, padding: 24, width: 520, maxWidth: '96vw', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+        <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 17, fontWeight: 700, color: COLORS.charcoal, marginBottom: 4 }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 12, color: '#918E98', marginBottom: 18 }}>{subtitle}</div>}
+        {children}
+        {footer && <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18, paddingTop: 14, borderTop: '1px solid #E2E0E5' }}>{footer}</div>}
+      </div>
+    </div>
+  );
+};
+
+const Btn = ({ children, primary, danger, sm, onClick, style: sx }) => {
+  const base = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: sm ? '5px 10px' : '7px 14px', borderRadius: 6, fontSize: sm ? 12 : 13, fontWeight: 500, cursor: 'pointer', border: '1px solid #D0CDD5', background: '#F4F3F5', color: '#5A5860', transition: 'all .15s', whiteSpace: 'nowrap' };
+  if (primary) Object.assign(base, { background: COLORS.burg, color: '#fff', borderColor: COLORS.burg });
+  if (danger) Object.assign(base, { background: COLORS.redD, color: COLORS.red, borderColor: COLORS.red });
+  return <button onClick={onClick} style={{ ...base, ...sx }}>{children}</button>;
+};
+
+const FormField = ({ label, children }) => (
+  <div style={{ marginBottom: 12 }}>
+    <label style={{ fontSize: 12, color: '#5A5860', display: 'block', marginBottom: 5 }}>{label}</label>
+    {children}
+  </div>
+);
+
+const inputStyle = { background: '#F4F3F5', border: '1px solid #D0CDD5', borderRadius: 6, color: '#2A2829', fontFamily: "'DM Sans',sans-serif", fontSize: 13, padding: '8px 12px', width: '100%', outline: 'none' };
+
+/* ═══════ HELPERS — convert API shape → UI shape ═══════ */
+// The API returns field names like assignee_initials, project_name, priority.
+// The existing UI components expect: ass, camp, pri, collabs (array of initials).
+const toTask = (t) => ({
+  ...t,
+  ass:    t.assignee_initials ?? t.ass,
+  camp:   t.project_name     ?? t.camp,
+  pri:    t.priority         ?? t.pri,
+  desc:   t.description      ?? t.desc,
+  collabs: t.collaborators
+    ? t.collaborators.map(c => c.initials)
+    : (t.collabs || []),
+});
+
+const toProject = (p) => ({
+  ...p,
+  pct:     p.progress !== undefined ? p.progress : p.pct,
+  members: p.members ? p.members.map(m => m.initials) : (p.members || []),
+  tags:    p.tags || [],
+});
+
+/* ═══════ MAIN APP ═══════ */
+export default function App() {
+  const { user: authUser, logout }        = useAuth();
+  const { socket }                        = useSocket();
+
+  const [view, setView]                   = useState('dashboard');
+  const [projects, setProjects]           = useState([]);
+  const [tasks, setTasks]                 = useState([]);
+  const [members, setMembers]             = useState({});
+  const [rawUsers, setRawUsers]           = useState([]); // full user objects with IDs
+  const [dataLoading, setDataLoading]     = useState(true);
+  const [activeTaskId, setActiveTaskId]   = useState(null);
+  const [activeFilter, setActiveFilter]   = useState('all');
+  const [taskModal, setTaskModal]         = useState(null);
+  const [projModal, setProjModal]         = useState(null);
+  const [memberModal, setMemberModal]     = useState(null);
+  const [confirmModal, setConfirmModal]   = useState(null);
+  const [addMemberModal, setAddMemberModal] = useState(false);
+  const [resetPassModal, setResetPassModal] = useState(null); // { userId, userName, initials }
+  const [dragId, setDragId]               = useState(null);
+  const [unreadChat, setUnreadChat]        = useState(0);    // badge on Team Chat nav item
+
+  // ── Load all data from the API on mount ────────────────────
+  const loadData = useCallback(async () => {
+    // ── DEBUG: logs appear in browser DevTools → Console tab (press F12) ──
+    console.log('⏳ Loading dashboard data from server...');
+    try {
+      const [tasksRes, projectsRes, usersRes] = await Promise.all([
+        API.getTasks(),
+        API.getProjects(),
+        API.getUsers(),
+      ]);
+
+      setTasks(tasksRes.data.tasks.map(toTask));
+      setProjects(projectsRes.data.projects.map(toProject));
+      setRawUsers(usersRes.data.users);
+      // ── DEBUG: confirm what was loaded ──────────────────────────────────
+      console.log(`✅ Data loaded — ${tasksRes.data.tasks.length} tasks, ${projectsRes.data.projects.length} projects, ${usersRes.data.users.length} users`);
+
+      // Rebuild the MEMBER_NAMES / MEMBER_ROLES lookup tables and members object
+      const membersObj = {};
+      usersRes.data.users.forEach(u => {
+        MEMBER_NAMES[u.initials]  = u.name.split(' ')[0];
+        MEMBER_ROLES[u.initials]  = u.job_title || u.role;
+        AVATAR_URLS[u.initials]   = u.avatar_url || null; // photo URL or null → falls back to initials
+        membersObj[u.initials] = {
+          name:   u.name,
+          role:   u.job_title || u.role,
+          status: u.status || 'Online',
+          active: tasksRes.data.tasks.filter(t =>
+            t.assignee_initials === u.initials && t.status !== 'done'
+          ).length,
+          tasks: [],
+        };
+      });
+      setMembers(membersObj);
+    } catch (err) {
+      // ── DEBUG: if data fails to load, the full error shows here ─────────
+      console.error('❌ Failed to load dashboard data:', err.message);
+      console.error('   → Is the server running? Check Terminal 1 (npm run dev in /server)');
+    } finally {
+      setDataLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  // ── Global chat listener — runs when NOT on the chat view ────
+  // Increments the unread badge and fires a desktop notification
+  // when a new message arrives from someone else.
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (msg) => {
+      if (view !== 'chat' && msg.user_id !== authUser?.id) {
+        setUnreadChat(n => n + 1);
+        showDesktopNotification(`${msg.name} in Team Chat`, msg.content);
+      }
+    };
+    socket.on('chat:message', handler);
+    return () => socket.off('chat:message', handler);
+  }, [socket, view, authUser?.id]);
+
+  // goNav must be declared before any conditional returns (React Rules of Hooks)
+  const goNav = useCallback((id) => {
+    setView(id);
+    setActiveTaskId(null);
+    if (id === 'chat') setUnreadChat(0); // clear badge when opening chat
+  }, []);
+
+  // Show a loading screen while the first data fetch is in progress
+  // This is AFTER all hooks — safe to return early here
+  if (dataLoading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: "'DM Sans',sans-serif", color: '#848688', fontSize: 14 }}>
+        Loading dashboard…
+      </div>
+    );
+  }
+
+  const openTasks    = tasks.filter(t => t.status !== 'done').length;
+  const doneTasks    = tasks.filter(t => t.status === 'done').length;
+  const activeProjects = projects.filter(p => p.status === 'active').length;
+  const activeTask   = tasks.find(t => t.id === activeTaskId);
+
+  /* ── TASK ACTIONS ── */
+  // Optimistic update: move task in UI immediately, then sync with API
+  const moveTask = async (id, newStatus) => {
+    setTasks(ts => ts.map(t => t.id === id ? { ...t, status: newStatus } : t));
+    try {
+      await API.updateTaskStatus(id, newStatus);
+    } catch (err) {
+      console.error('Move task failed:', err.message);
+      loadData(); // revert by reloading
+    }
+  };
+
+  const deleteTask = async (id) => {
+    try {
+      await API.deleteTask(id);
+      setTasks(ts => ts.filter(t => t.id !== id));
+      setActiveTaskId(null);
+    } catch (err) { console.error('Delete task failed:', err.message); }
+  };
+
+  const toggleCollab = async (taskId, key) => {
+    // Optimistic UI update
+    setTasks(ts => ts.map(t => {
+      if (t.id !== taskId) return t;
+      const c = t.collabs || [];
+      return { ...t, collabs: c.includes(key) ? c.filter(k => k !== key) : [...c, key] };
+    }));
+    // Sync with API — send the full updated collaborators list
+    const task = tasks.find(t => t.id === taskId);
+    const current = task?.collabs || [];
+    const updated = current.includes(key) ? current.filter(k => k !== key) : [...current, key];
+    const collaboratorIds = updated.map(initials => rawUsers.find(u => u.initials === initials)?.id).filter(Boolean);
+    try {
+      await API.updateTask(taskId, { collaborators: collaboratorIds });
+    } catch (err) { console.error('Toggle collab failed:', err.message); }
+  };
+
+  const changePriority = async (taskId, pri) => {
+    setTasks(ts => ts.map(t => t.id === taskId ? { ...t, pri } : t));
+    try {
+      await API.updateTask(taskId, { priority: pri });
+    } catch (err) { console.error('Change priority failed:', err.message); }
+  };
+
+  // Helper: look up a user's database ID from their initials
+  const userId = (initials) => rawUsers.find(u => u.initials === initials)?.id;
+
+  const submitTask = async (data) => {
+    const apiPayload = {
+      title:          data.title,
+      description:    data.desc,
+      status:         data.status,
+      priority:       data.pri,
+      dept:           data.dept,
+      due_date:       data.due,
+      assignee_id:    userId(data.ass),
+      project_id:     projects.find(p => p.name === data.camp)?.id,
+      collaborators:  (data.collabs || []).map(userId).filter(Boolean),
+    };
+    try {
+      if (data.id) {
+        const res = await API.updateTask(data.id, apiPayload);
+        setTasks(ts => ts.map(t => t.id === data.id ? toTask(res.data.task) : t));
+      } else {
+        const res = await API.createTask(apiPayload);
+        setTasks(ts => [toTask(res.data.task), ...ts]);
+      }
+    } catch (err) { console.error('Submit task failed:', err.message); }
+    setTaskModal(null);
+  };
+
+  const submitProject = async (data) => {
+    const PROJECT_COLORS_LIST = [COLORS.teal, COLORS.amber, COLORS.blue, COLORS.coral, COLORS.purple, COLORS.green];
+    const apiPayload = {
+      name:       data.name,
+      type:       data.type,
+      status:     data.status,
+      progress:   data.pct ?? data.progress ?? 0,
+      color:      data.color || PROJECT_COLORS_LIST[projects.length % 6],
+      start_date: data.start,
+      due_date:   data.due,
+      members:    (data.members || []).map(userId).filter(Boolean),
+      tags:       data.tags || [],
+    };
+    try {
+      if (data.id) {
+        const res = await API.updateProject(data.id, apiPayload);
+        setProjects(ps => ps.map(p => p.id === data.id ? toProject(res.data.project) : p));
+      } else {
+        const res = await API.createProject(apiPayload);
+        setProjects(ps => [...ps, toProject(res.data.project)]);
+      }
+    } catch (err) { console.error('Submit project failed:', err.message); }
+    setProjModal(null);
+  };
+
+  const saveMember = async (key, data) => {
+    const user = rawUsers.find(u => u.initials === key);
+    if (!user) return;
+    try {
+      // Only send email if it changed (avoids unnecessary uniqueness checks)
+      const payload = { name: data.name, job_title: data.role, status: data.status };
+      if (data.email && data.email.trim() !== user.email) {
+        payload.email = data.email.trim();
+      }
+      await API.updateUser(user.id, payload);
+      setMembers(m => ({ ...m, [key]: { ...m[key], ...data } }));
+      setRawUsers(us => us.map(u => u.initials === key ? { ...u, ...payload } : u));
+      MEMBER_NAMES[key] = data.name.split(' ')[0];
+      MEMBER_ROLES[key] = data.role;
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to save changes.');
+      console.error('Save member failed:', err.message);
+    }
+    setMemberModal(null);
+  };
+
+  // Add a brand-new team member (admin only)
+  const addMember = async (formData) => {
+    try {
+      const res = await API.createUser(formData);
+      const u   = res.data.user;
+      // Immediately reflect in state without a full reload
+      MEMBER_NAMES[u.initials] = u.name.split(' ')[0];
+      MEMBER_ROLES[u.initials] = u.job_title || u.role;
+      setMembers(m => ({
+        ...m,
+        [u.initials]: { name: u.name, role: u.job_title || '', status: 'Online', active: 0, tasks: [] },
+      }));
+      setRawUsers(us => [...us, u]);
+      setAddMemberModal(false);
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Failed to add member.';
+      alert(msg);
+    }
+  };
+
+  // Promote a member to admin or demote admin to member
+  const changeUserRole = async (initials, newRole) => {
+    const u = rawUsers.find(r => r.initials === initials);
+    if (!u) return;
+    try {
+      await API.updateUserRole(u.id, newRole);
+      setRawUsers(us => us.map(r => r.initials === initials ? { ...r, role: newRole } : r));
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to update role.');
+    }
+  };
+
+  // Remove a team member entirely (admin only)
+  const removeMember = async (initials) => {
+    const u = rawUsers.find(r => r.initials === initials);
+    if (!u) return;
+    try {
+      await API.deleteUser(u.id);
+      setMembers(m => { const next = { ...m }; delete next[initials]; return next; });
+      setRawUsers(us => us.filter(r => r.initials !== initials));
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to remove member.');
+    }
+  };
+
+  /* ── DRAG & DROP ── */
+  const onDragStart = (e, id) => { setDragId(id); e.dataTransfer.effectAllowed = 'move'; };
+  const onDrop = (e, status) => { e.preventDefault(); if (dragId) moveTask(dragId, status); setDragId(null); };
+
+  /* ═══════ SIDEBAR ═══════ */
+  const Sidebar = () => (
+    <nav style={{ width: 222, minWidth: 222, background: '#8F3030', display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', zIndex: 10 }}>
+      {/* ── Sidebar header — logo + company name ── */}
+      <div style={{ padding: '16px 16px 14px', borderBottom: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.15)' }}>
+        {/* Logo image. If the logo doesn't appear, check BRAND.logo path above. */}
+        <img
+          src={BRAND.logo}
+          alt={BRAND.company}
+          style={{ height: 52, maxWidth: '100%', objectFit: 'contain', objectPosition: 'left' }}
+          onError={e => {
+            // Fallback: show text if image fails to load
+            e.target.style.display = 'none';
+            e.target.nextSibling.style.display = 'flex';
+          }}
+        />
+        {/* Text fallback (hidden unless logo fails to load) */}
+        <div style={{ display: 'none', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 8, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Syne',sans-serif", fontWeight: 800, fontSize: 12, color: '#fff' }}>TD</div>
+          <div>
+            <div style={{ fontFamily: "'Syne',sans-serif", fontWeight: 700, fontSize: 15, color: '#fff' }}>{BRAND.company}</div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 1 }}>{BRAND.subtitle}</div>
+          </div>
+        </div>
+        {/* Subtitle shown below the logo */}
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 1, marginTop: 6 }}>{BRAND.subtitle}</div>
+      </div>
+      <div style={{ flex: 1, padding: '10px 8px', overflowY: 'auto' }}>
+        {NAV_ITEMS.filter(item => !item.adminOnly || authUser?.role === 'admin').map((item, i) => {
+          if (item.section) return <div key={i} style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', padding: '10px 8px 6px', fontWeight: 500 }}>{item.section}</div>;
+          const active = view === item.id;
+          const Icon = item.icon;
+          const badgeVal = item.badge === 'camps' ? projects.length : item.badge === 'tasks' ? openTasks : item.badge === 'notifs' ? 3 : item.badge === 'chat' && unreadChat > 0 ? unreadChat : null;
+          return (
+            <div key={item.id} onClick={() => goNav(item.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', color: active ? '#fff' : 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 1, background: active ? 'rgba(255,255,255,0.18)' : 'transparent', fontWeight: active ? 500 : 400 }}>
+              <Icon size={16} style={{ opacity: active ? 1 : 0.7 }} />
+              {item.label}
+              {badgeVal !== null && <span style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.22)', color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 20, padding: '1px 6px', minWidth: 18, textAlign: 'center' }}>{badgeVal}</span>}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 6 }}>
+          <Avatar k={authUser?.initials || 'SO'} size={28} style={{ background: 'rgba(255,255,255,0.2)', color: '#fff' }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{authUser?.name?.split(' ')[0] || 'User'}</div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)' }}>{authUser?.job_title || authUser?.role}</div>
+          </div>
+          <div onClick={logout} title="Sign out" style={{ cursor: 'pointer', color: 'rgba(255,255,255,0.5)', flexShrink: 0 }}>
+            <LogOut size={14} />
+          </div>
+        </div>
+      </div>
+    </nav>
+  );
+
+  /* ═══════ TASK CARD ═══════ */
+  const TaskCard = ({ task }) => {
+    const isDone = task.status === 'done';
+    const collabs = (task.collabs || []).filter(c => c !== task.ass);
+    return (
+      <div draggable onDragStart={e => onDragStart(e, task.id)} onClick={() => setActiveTaskId(task.id)}
+        style={{ background: '#F4F3F5', border: `1px solid ${activeTaskId === task.id ? COLORS.burg : '#E2E0E5'}`, borderRadius: 6, padding: '11px 12px', cursor: 'pointer', opacity: isDone ? 0.6 : 1, boxShadow: activeTaskId === task.id ? `0 0 0 1px ${COLORS.burg}` : 'none', transition: 'all .15s' }}>
+        <DeptTag dept={task.dept} />
+        <div style={{ fontSize: 13, fontWeight: 500, color: '#2A2829', marginBottom: 7, lineHeight: 1.4 }}>{task.title}</div>
+        {collabs.length > 0 && (
+          <div style={{ display: 'flex', marginTop: 6 }}>
+            {collabs.map(c => <Avatar key={c} k={c} size={16} style={{ marginLeft: -4, border: '1.5px solid #fff', fontSize: 7 }} />)}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+          <span style={{ fontSize: 10, color: '#918E98', flex: 1 }}>{task.due || 'No date'}</span>
+          <Avatar k={task.ass} size={18} />
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: PRIORITY_DOT[task.pri] || COLORS.green }} />
+        </div>
+      </div>
+    );
+  };
+
+  /* ═══════ VIEWS ═══════ */
+  const DashboardView = () => (
+    <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 22, fontWeight: 700, color: COLORS.charcoal, marginBottom: 4 }}>Good morning, {authUser?.name?.split(' ')[0] || 'there'} 👋</h1>
+        <p style={{ color: '#5A5860', fontSize: 12 }}>Here's what's happening across the data team today — <strong style={{ color: COLORS.burg }}>3 deadlines</strong> approaching this week.</p>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
+        <StatCard label="Ongoing Projects" value={activeProjects} delta="↑ 2 from last month" up />
+        <StatCard label="Open Tasks" value={openTasks} delta="↑ 4 overdue" />
+        <StatCard label="Completed Projects" value={doneTasks} delta="↑ 18% vs last month" up />
+        <StatCard label="Team Utilization" value="82%" delta="Healthy range" up />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+        <Panel title="Ongoing Projects" action="View all →" actionClick={() => goNav('projects')}>
+          {projects.slice(0, 5).map(p => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #E2E0E5', cursor: 'pointer' }}>
+              <div style={{ width: 3, height: 32, borderRadius: 2, background: p.color, flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: '#2A2829', marginBottom: 2 }}>{p.name}</div>
+                <div style={{ fontSize: 11, color: '#918E98' }}>{p.tags.join(' • ')}</div>
+              </div>
+              <div>
+                <Pill status={p.status} />
+                <div style={{ marginTop: 5 }}><ProgressBar pct={p.pct} color={p.color} width={80} /></div>
+              </div>
+            </div>
+          ))}
+        </Panel>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <Panel title="Upcoming Deadlines">
+            {[{ t: 'Power BI Inventory Dashboard', s: 'Data Analyst', d: 'Tomorrow', c: COLORS.red, dc: COLORS.red },
+              { t: 'Weekly Snapshot Report', s: 'Data Analyst', d: 'Mar 27', c: COLORS.amber, dc: COLORS.amber },
+              { t: 'Data Migration Phase 2', s: 'Data Engineer', d: 'Mar 28', c: COLORS.amber, dc: COLORS.amber },
+              { t: 'Process Automation Review', s: 'Data Team Lead', d: 'Apr 1', c: COLORS.blue, dc: '#918E98' }
+            ].map((item, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: i < 3 ? '1px solid #E2E0E5' : 'none' }}>
+                <div style={{ width: 6, height: 6, borderRadius: '50%', background: item.c, flexShrink: 0 }} />
+                <div style={{ flex: 1 }}><div style={{ fontSize: 12, color: '#2A2829', marginBottom: 2 }}>{item.t}</div><div style={{ fontSize: 11, color: '#918E98' }}>{item.s}</div></div>
+                <div style={{ fontSize: 11, fontWeight: 500, color: item.dc }}>{item.d}</div>
+              </div>
+            ))}
+          </Panel>
+          <Panel title="Quick Actions">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              <Btn sm onClick={() => setTaskModal({})} style={{ width: '100%', justifyContent: 'flex-start' }}><Plus size={13} /> Create New Task</Btn>
+              <Btn sm onClick={() => setProjModal({})} style={{ width: '100%', justifyContent: 'flex-start' }}><FolderKanban size={13} /> Launch Project</Btn>
+              <Btn sm onClick={() => goNav('reports')} style={{ width: '100%', justifyContent: 'flex-start' }}><BarChart3 size={13} /> View Reports</Btn>
+              <Btn sm onClick={() => goNav('team')} style={{ width: '100%', justifyContent: 'flex-start' }}><Users size={13} /> Manage Team</Btn>
+            </div>
+          </Panel>
+        </div>
+      </div>
+      <Panel title="Team Workload — Active Tasks per Member" action="Manage →" actionClick={() => goNav('team')}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginTop: 4 }}>
+          {Object.entries(members).map(([k, m]) => {
+            const mc = MEMBER_COLORS[k] || { fg: '#848688' };
+            return (
+              <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <div style={{ fontSize: 12, color: '#5A5860', width: 110, flexShrink: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{MEMBER_NAMES[k]}.</div>
+                <div style={{ flex: 1, background: '#F4F3F5', borderRadius: 3, height: 6, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', borderRadius: 3, width: `${Math.min(m.active * 10, 100)}%`, background: mc.fg }} />
+                </div>
+                <div style={{ fontSize: 11, color: '#918E98', width: 26, textAlign: 'right' }}>{m.active}</div>
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
+    </div>
+  );
+
+  /* ── PROJECTS VIEW ── */
+  const ProjectsView = () => (
+    <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <div><h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal, marginBottom: 4 }}>Project Management</h2><p style={{ color: '#5A5860', fontSize: 12 }}>Track all projects across the data team.</p></div>
+        <div style={{ marginLeft: 'auto' }}><Btn primary sm onClick={() => setProjModal({})}><Plus size={12} /> New Project</Btn></div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 14 }}>
+        {projects.map(p => (
+          <div key={p.id} style={{ background: '#fff', border: '1px solid #E2E0E5', borderRadius: 10, padding: 18, borderLeft: `3px solid ${p.color}`, boxShadow: '0 1px 3px rgba(0,0,0,0.04)', position: 'relative' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: '#2A2829' }}>{p.name}</div><div style={{ fontSize: 11, color: '#918E98', marginTop: 2 }}>{p.type} · Started {p.start}</div></div>
+              <Pill status={p.status} />
+            </div>
+            <ProgressBar pct={p.pct} color={p.color} />
+            <div style={{ fontSize: 11, color: '#918E98', margin: '8px 0 12px' }}>{p.pct}% complete · Due {p.due}</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{p.tags.map(t => <Tag key={t}>{t}</Tag>)}</div>
+            <div style={{ height: 1, background: '#E2E0E5', margin: '14px 0' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex' }}>{p.members.map(m => <Avatar key={m} k={m} size={22} style={{ marginLeft: -6, border: '1.5px solid #fff' }} />)}</div>
+              <span style={{ fontSize: 11, color: '#918E98' }}>{p.members.length} member{p.members.length > 1 ? 's' : ''}</span>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                {p.urgent && <span style={{ fontSize: 11, color: COLORS.red }}>{p.urgent} urgent</span>}
+                {p.open && <span style={{ fontSize: 11, color: '#918E98' }}>{p.open} open tasks</span>}
+              </div>
+            </div>
+            <div style={{ position: 'absolute', top: 14, right: 14, display: 'flex', gap: 6 }}>
+              <Btn sm onClick={() => setProjModal(p)}><Pencil size={11} /></Btn>
+              <Btn sm danger onClick={() => setConfirmModal({ title: 'Delete Project?', body: `"${p.name}" will be permanently removed.`, onConfirm: async () => { await API.deleteProject(p.id); setProjects(ps => ps.filter(x => x.id !== p.id)); setConfirmModal(null); } })}><Trash2 size={11} /></Btn>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  /* ── TASK DETAIL PANEL (with comments + activity) ── */
+  const TaskDetailPanel = () => {
+    const [comments, setComments] = useState([]);
+    const [activity, setActivity] = useState([]);
+    const [text, setText]         = useState('');
+    const [loadingC, setLoadingC] = useState(true);
+    const [posting, setPosting]   = useState(false);
+
+    // Fetch comments + activity whenever the selected task changes
+    useEffect(() => {
+      if (!activeTask) return;
+      setLoadingC(true);
+      API.getComments(activeTask.id)
+        .then(res => { setComments(res.data.comments); setActivity(res.data.activity); })
+        .catch(err => console.error('Load comments:', err.message))
+        .finally(() => setLoadingC(false));
+    }, [activeTask?.id]);
+
+    const handlePost = async () => {
+      if (!text.trim()) return;
+      setPosting(true);
+      try {
+        const res = await API.addComment(activeTask.id, text.trim());
+        setComments(c => [...c, res.data.comment]);
+        setText('');
+      } catch (err) { alert(err.response?.data?.error || 'Failed to post.'); }
+      finally { setPosting(false); }
+    };
+
+    const handleDelete = async (commentId) => {
+      try {
+        await API.deleteComment(activeTask.id, commentId);
+        setComments(c => c.filter(x => x.id !== commentId));
+      } catch (err) { alert(err.response?.data?.error || 'Failed to delete.'); }
+    };
+
+    // Merge comments and activity into one chronological timeline
+    const timeline = [
+      ...comments.map(c => ({ ...c, _type: 'comment' })),
+      ...activity.map(a => ({ ...a, _type: 'activity' })),
+    ].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+    const fmt = iso => {
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) +
+             ' · ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    };
+
+    return (
+      <div style={{ width: 380, minWidth: 380, background: '#fff', borderLeft: '1px solid #E2E0E5', height: 'calc(100vh - 54px)', display: 'flex', flexDirection: 'column' }}>
+
+        {/* ── Header ── */}
+        <div style={{ padding: '16px 18px', borderBottom: '1px solid #E2E0E5', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 15, fontWeight: 700, color: '#2A2829', flex: 1, lineHeight: 1.4 }}>{activeTask.title}</div>
+          <div onClick={() => setActiveTaskId(null)} style={{ cursor: 'pointer', color: '#918E98' }}><X size={18} /></div>
+        </div>
+
+        {/* ── Scrollable body ── */}
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+
+          {/* Task details */}
+          <div style={{ padding: '16px 18px' }}>
+            {activeTask.desc && <div style={{ marginBottom: 16 }}><div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#918E98', marginBottom: 6, fontWeight: 500 }}>Description</div><div style={{ fontSize: 13, color: '#5A5860', lineHeight: 1.6 }}>{activeTask.desc}</div></div>}
+            <div style={{ marginBottom: 16 }}><div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#918E98', marginBottom: 6, fontWeight: 500 }}>Move To</div>
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                {COL_STAT.map(s => <button key={s} onClick={() => moveTask(activeTask.id, s)} style={{ padding: '4px 9px', borderRadius: 20, fontSize: 11, fontWeight: 500, cursor: 'pointer', border: `1px solid ${activeTask.status === s ? COLORS.burg : '#D0CDD5'}`, background: activeTask.status === s ? COLORS.burgDim : '#F4F3F5', color: activeTask.status === s ? COLORS.burg : '#5A5860' }}>{COL_LABELS[s]}</button>)}
+              </div>
+            </div>
+            <div style={{ marginBottom: 16 }}><div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#918E98', marginBottom: 6, fontWeight: 500 }}>Priority</div>
+              <select value={activeTask.pri} onChange={e => changePriority(activeTask.id, e.target.value)} style={{ ...inputStyle, fontSize: 12 }}>
+                <option value="h">🔴 High</option><option value="m">🟡 Medium</option><option value="l">🟢 Low</option>
+              </select>
+            </div>
+            <div style={{ marginBottom: 16 }}><div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#918E98', marginBottom: 6, fontWeight: 500 }}>Assignee</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Avatar k={activeTask.ass} size={28} />
+                <div><div style={{ fontSize: 13, color: '#2A2829' }}>{MEMBER_NAMES[activeTask.ass]}</div><div style={{ fontSize: 10, color: '#918E98' }}>{MEMBER_ROLES[activeTask.ass]}</div></div>
+              </div>
+            </div>
+            <div style={{ marginBottom: 16 }}><div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#918E98', marginBottom: 6, fontWeight: 500 }}>Collaborators</div>
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                {Object.keys(MEMBER_NAMES).filter(k => k !== activeTask.ass).map(k => {
+                  const tagged = (activeTask.collabs || []).includes(k);
+                  return <div key={k} onClick={() => toggleCollab(activeTask.id, k)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px 3px 4px', borderRadius: 20, background: tagged ? COLORS.burgDim : '#EBEAED', border: `1px solid ${tagged ? COLORS.burg : '#E2E0E5'}`, fontSize: 11, color: tagged ? COLORS.burg : '#5A5860', cursor: 'pointer' }}>
+                    <Avatar k={k} size={16} />{MEMBER_NAMES[k]}
+                  </div>;
+                })}
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 4 }}>
+              <div><div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#918E98', marginBottom: 4, fontWeight: 500 }}>Due Date</div><div style={{ fontSize: 13, color: '#5A5860' }}>{activeTask.due || '—'}</div></div>
+              <div><div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#918E98', marginBottom: 4, fontWeight: 500 }}>Project</div><div style={{ fontSize: 13, color: '#5A5860' }}>{activeTask.camp || '—'}</div></div>
+            </div>
+          </div>
+
+          {/* ── Comments & Activity timeline ── */}
+          <div style={{ borderTop: '1px solid #E2E0E5', padding: '12px 18px 0' }}>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#918E98', fontWeight: 500, marginBottom: 12 }}>Comments & Activity</div>
+            {loadingC ? (
+              <div style={{ fontSize: 12, color: '#C4C2C8', paddingBottom: 12 }}>Loading…</div>
+            ) : timeline.length === 0 ? (
+              <div style={{ fontSize: 12, color: '#C4C2C8', paddingBottom: 12 }}>No activity yet — be the first to comment.</div>
+            ) : (
+              timeline.map(item => item._type === 'comment' ? (
+                <div key={`c${item.id}`} style={{ display: 'flex', gap: 9, marginBottom: 14 }}>
+                  <Avatar k={item.initials} size={26} style={{ marginTop: 1, flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#2A2829' }}>{item.name}</span>
+                      <span style={{ fontSize: 10, color: '#C4C2C8' }}>{fmt(item.created_at)}</span>
+                      {(authUser?.id === item.user_id || authUser?.role === 'admin') && (
+                        <span onClick={() => handleDelete(item.id)} title="Delete" style={{ marginLeft: 'auto', cursor: 'pointer', color: '#C4C2C8', fontSize: 11 }}>✕</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 13, color: '#5A5860', lineHeight: 1.5, background: '#F4F3F5', borderRadius: '0 8px 8px 8px', padding: '8px 10px' }}>{item.content}</div>
+                  </div>
+                </div>
+              ) : (
+                <div key={`a${item.id}`} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10, fontSize: 11, color: '#918E98' }}>
+                  <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#D0CDD5', flexShrink: 0, marginLeft: 10 }} />
+                  <span><strong style={{ color: '#5A5860' }}>{item.initials}</strong> {item.action} · {item.detail}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 10, color: '#C4C2C8', whiteSpace: 'nowrap' }}>{fmt(item.created_at)}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* ── Comment input + task actions ── */}
+        <div style={{ padding: '12px 18px', borderTop: '1px solid #E2E0E5' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 8 }}>
+            <Avatar k={authUser?.initials || 'SO'} size={26} style={{ flexShrink: 0, marginBottom: 2 }} />
+            <textarea
+              value={text} rows={2}
+              onChange={e => setText(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handlePost(); } }}
+              placeholder="Leave a comment… (Enter to post)"
+              style={{ ...inputStyle, flex: 1, resize: 'none', fontSize: 12, padding: '7px 10px' }}
+            />
+            <Btn primary sm onClick={handlePost} disabled={posting || !text.trim()} style={{ flexShrink: 0, marginBottom: 2 }}>
+              {posting ? '…' : 'Post'}
+            </Btn>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn sm onClick={() => setTaskModal(activeTask)} style={{ flex: 1, justifyContent: 'center' }}><Pencil size={12} /> Edit</Btn>
+            <Btn sm danger onClick={() => setConfirmModal({ title: 'Delete this task?', body: `"${activeTask.title}" will be permanently removed.`, onConfirm: () => { deleteTask(activeTask.id); setConfirmModal(null); } })}><Trash2 size={12} /></Btn>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /* ── TASK BOARD ── */
+  const TaskBoardView = () => (
+    <div style={{ display: 'flex', flex: 1, overflow: 'hidden', height: 'calc(100vh - 54px)' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {[{ f: 'all', l: 'All Tasks' }, { f: 'bu', l: 'BU' }, { f: 'bg', l: 'BG' }].map(t => (
+              <div key={t.f} onClick={() => { setActiveFilter(t.f); setActiveTaskId(null); }} style={{ padding: '5px 12px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: `1px solid ${activeFilter === t.f ? COLORS.burg : '#E2E0E5'}`, color: activeFilter === t.f ? COLORS.burg : '#5A5860', background: activeFilter === t.f ? COLORS.burgDim : 'transparent' }}>{t.l}</div>
+            ))}
+          </div>
+          <div style={{ marginLeft: 'auto' }}><Btn primary sm onClick={() => setTaskModal({})}><Plus size={12} /> Add Task</Btn></div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,minmax(220px,1fr))', gap: 12, overflowX: 'auto', paddingBottom: 10 }}>
+          {COL_STAT.map(stat => {
+            const filtered = tasks.filter(t => t.status === stat && (activeFilter === 'all' || t.dept === activeFilter));
+            return (
+              <div key={stat} onDragOver={e => e.preventDefault()} onDrop={e => onDrop(e, stat)}
+                style={{ background: '#fff', border: '1px solid #E2E0E5', borderRadius: 10, minHeight: 400, display: 'flex', flexDirection: 'column', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                <div style={{ padding: '12px 14px', borderBottom: '1px solid #E2E0E5', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7, color: COLORS.charcoal }}>
+                    <div style={{ width: 7, height: 7, borderRadius: '50%', background: COL_DOT[stat] }} />
+                    {COL_LABELS[stat]}
+                    <span style={{ fontSize: 10, background: '#EBEAED', color: '#918E98', borderRadius: 20, padding: '1px 7px' }}>{filtered.length}</span>
+                  </div>
+                  {stat !== 'done' && <div onClick={() => setTaskModal({ status: stat })} style={{ cursor: 'pointer', color: '#918E98', fontSize: 18 }}>+</div>}
+                </div>
+                <div style={{ padding: 10, flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {filtered.map(t => <TaskCard key={t.id} task={t} />)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {/* Detail Panel — now a full component with comments & activity */}
+      {activeTask && <TaskDetailPanel />}
+    </div>
+  );
+
+  /* ── TEAM VIEW ── */
+  const TeamView = () => (
+    <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <div>
+          <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal, marginBottom: 4 }}>Data Team</h2>
+          <p style={{ color: '#5A5860', fontSize: 12 }}>{Object.keys(members).length} members · Manage assignments and roles.</p>
+        </div>
+        {/* Only the admin sees the Add Member button */}
+        {authUser?.role === 'admin' && (
+          <div style={{ marginLeft: 'auto' }}>
+            <Btn primary sm onClick={() => setAddMemberModal(true)}><Plus size={12} /> Add Member</Btn>
+          </div>
+        )}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14 }}>
+        {Object.entries(members).map(([key, m]) => {
+          const mc         = MEMBER_COLORS[key] || { bg: '#EBEAED', fg: '#5A5860' };
+          const rawUser    = rawUsers.find(u => u.initials === key);
+          const isAdmin    = rawUser?.role === 'admin';
+          const isSelf     = authUser?.initials === key;
+          const reviewCnt  = tasks.filter(t => t.ass === key && t.status === 'review').length;
+          const doneCnt    = tasks.filter(t => t.ass === key && t.status === 'done').length;
+          const statusPill = { Online: STATUS_PILLS.active, Away: STATUS_PILLS.review, 'In Meeting': STATUS_PILLS.planning, Focused: STATUS_PILLS.draft }[m.status] || STATUS_PILLS.planning;
+          return (
+            <div key={key} style={{ background: '#fff', border: '1px solid #E2E0E5', borderRadius: 10, padding: 18, position: 'relative', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+
+              {/* Action buttons — top right */}
+              <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 5 }}>
+                <Btn sm onClick={() => setMemberModal({ key, email: rawUser?.email || '', ...m })}><Pencil size={11} /></Btn>
+                {authUser?.role === 'admin' && !isSelf && (
+                  <>
+                    {/* Promote / demote */}
+                    <Btn sm onClick={() => changeUserRole(key, isAdmin ? 'member' : 'admin')}
+                      style={{ fontSize: 10, padding: '4px 7px' }}
+                      title={isAdmin ? 'Remove admin rights' : 'Make admin'}>
+                      {isAdmin ? '↓ Member' : '↑ Admin'}
+                    </Btn>
+                    {/* Remove member */}
+                    <Btn sm danger onClick={() => setConfirmModal({
+                      title: 'Remove member?',
+                      body: `${m.name} will be removed from the team and lose access.`,
+                      onConfirm: async () => { await removeMember(key); setConfirmModal(null); }
+                    })}><Trash2 size={11} /></Btn>
+                  </>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, marginTop: 4 }}>
+                <div style={{ width: 42, height: 42, borderRadius: '50%', background: mc.bg, color: mc.fg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, fontFamily: "'Syne',sans-serif" }}>{key}</div>
+                <div>
+                  <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 14, fontWeight: 600, color: '#2A2829' }}>{m.name}</div>
+                  <div style={{ fontSize: 11, color: '#918E98', marginTop: 2 }}>{m.role}</div>
+                  <div style={{ display: 'flex', gap: 5, marginTop: 5, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 9, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: statusPill.bg, color: statusPill.fg }}>{m.status}</span>
+                    {/* Admin badge */}
+                    {isAdmin && <span style={{ fontSize: 9, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: COLORS.burgDim, color: COLORS.burg }}>Admin</span>}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 12 }}>
+                {[{ v: m.active, l: 'Active' }, { v: reviewCnt, l: 'Review' }, { v: doneCnt, l: 'Done' }].map(s => (
+                  <div key={s.l} style={{ background: '#F4F3F5', borderRadius: 6, padding: 8, textAlign: 'center' }}>
+                    <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 700, color: COLORS.charcoal }}>{s.v}</div>
+                    <div style={{ fontSize: 10, color: '#918E98', marginTop: 1 }}>{s.l}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 10 }}>
+                {(m.tasks || []).slice(0, 3).map((t, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: '#5A5860' }}>
+                    <div style={{ width: 5, height: 5, borderRadius: '50%', background: [COLORS.amber, COLORS.red, COLORS.blue][i] || '#918E98', flexShrink: 0 }} />{t}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  /* ── CALENDAR VIEW ── */
+  const CalendarView = () => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const events = { 1: [{ t: 'Data Migration Kickoff', c: COLORS.teal, bg: COLORS.tealD }], 3: [{ t: 'Power BI Sprint Start', c: COLORS.blue, bg: COLORS.blueD }], 5: [{ t: 'Data Quality Review', c: COLORS.purple, bg: COLORS.purpleD }], 10: [{ t: 'ETL Pipeline Review', c: COLORS.amber, bg: COLORS.amberD }], 12: [{ t: 'Stakeholder Demo', c: COLORS.coral, bg: COLORS.coralD }], 15: [{ t: 'Dashboard Go-Live', c: COLORS.green, bg: COLORS.greenD }], 18: [{ t: 'Automation Sprint', c: COLORS.purple, bg: COLORS.purpleD }], 20: [{ t: 'Migration Phase 2', c: COLORS.teal, bg: COLORS.tealD }], 24: [{ t: 'Weekly Sync', c: COLORS.burg, bg: COLORS.burgDim }, { t: 'Inventory Dash DUE', c: COLORS.red, bg: COLORS.redD }], 26: [{ t: 'Sales Dash Review', c: COLORS.blue, bg: COLORS.blueD }], 27: [{ t: 'Snapshot Report DUE', c: COLORS.amber, bg: COLORS.amberD }], 30: [{ t: 'Process Automation', c: COLORS.green, bg: COLORS.greenD }] };
+    const prevDays = [23, 24, 25, 26, 27, 28];
+    const monthDays = Array.from({ length: 31 }, (_, i) => i + 1);
+    const nextDays = [1, 2, 3, 4, 5];
+    return (
+      <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><div style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #E2E0E5', cursor: 'pointer', color: '#5A5860' }}><ChevronLeft size={14} /></div><div style={{ fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 700, color: COLORS.charcoal }}>March 2025</div><div style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #E2E0E5', cursor: 'pointer', color: '#5A5860' }}><ChevronRight size={14} /></div></div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 1, background: '#E2E0E5' }}>
+          {days.map(d => <div key={d} style={{ background: '#fff', padding: 8, textAlign: 'center', fontSize: 11, color: '#918E98', textTransform: 'uppercase', letterSpacing: 0.5 }}>{d}</div>)}
+          {prevDays.map(d => <div key={`p${d}`} style={{ background: '#fff', minHeight: 90, padding: 7 }}><div style={{ fontSize: 12, color: '#918E98', marginBottom: 4 }}>{d}</div></div>)}
+          {monthDays.map(d => (
+            <div key={d} style={{ background: d === 24 ? COLORS.burgDim : '#fff', minHeight: 90, padding: 7, cursor: 'pointer' }}>
+              <div style={{ fontSize: 12, color: d === 24 ? COLORS.burg : '#5A5860', marginBottom: 4, fontWeight: d === 24 ? 700 : 500 }}>{d}</div>
+              {(events[d] || []).map((ev, i) => <div key={i} style={{ fontSize: 10, padding: '2px 5px', borderRadius: 3, marginBottom: 2, background: ev.bg, color: ev.c, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.t}</div>)}
+            </div>
+          ))}
+          {nextDays.map(d => <div key={`n${d}`} style={{ background: '#fff', minHeight: 90, padding: 7 }}><div style={{ fontSize: 12, color: '#918E98', marginBottom: 4 }}>{d}</div></div>)}
+        </div>
+      </div>
+    );
+  };
+
+  /* ── TIMELINE VIEW ── */
+  const TimelineView = () => {
+    const rows = [
+      { name: 'Data Migration', left: 20, width: 50, color: COLORS.teal, bg: COLORS.tealD, label: 'Data Migration' },
+      { name: 'Power BI Inventory', left: 22, width: 25, color: COLORS.blue, bg: COLORS.blueD, label: 'Inventory Dash' },
+      { name: 'Power BI Sales', left: 24, width: 45, color: COLORS.amber, bg: COLORS.amberD, label: 'Sales Dash' },
+      { name: 'Power BI Customer Perf.', left: 42, width: 40, color: COLORS.coral, bg: COLORS.coralD, label: 'Customer Perf.' },
+      { name: 'Weekly Snapshot', left: 5, width: 80, color: COLORS.purple, bg: COLORS.purpleD, label: 'Ongoing' },
+      { name: 'Process Automation', left: 30, width: 50, color: COLORS.green, bg: COLORS.greenD, label: 'Automation' },
+    ];
+    return (
+      <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+        <div style={{ marginBottom: 16 }}><h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal, marginBottom: 4 }}>Project Timeline</h2><p style={{ color: '#5A5860', fontSize: 12 }}>Gantt-style overview of all active projects — Q1/Q2 2025.</p></div>
+        <Panel>
+          <div style={{ overflowX: 'auto' }}>
+            <div style={{ minWidth: 900 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', borderBottom: '1px solid #E2E0E5', marginBottom: 4 }}>
+                <div style={{ fontSize: 11, color: '#918E98', padding: '6px 12px' }}>Project</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)' }}>
+                  {['Feb', 'Mar', 'Apr', 'May', 'Jun'].map(m => <div key={m} style={{ fontSize: 10, color: '#918E98', textAlign: 'center', padding: '6px 0', letterSpacing: 0.5, textTransform: 'uppercase' }}>{m}</div>)}
+                </div>
+              </div>
+              {rows.map((r, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '160px 1fr', marginBottom: 6, alignItems: 'center' }}>
+                  <div style={{ fontSize: 12, color: '#5A5860', padding: '0 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
+                  <div style={{ position: 'relative', height: 28, display: 'flex', alignItems: 'center' }}>
+                    <div style={{ position: 'absolute', left: `${r.left}%`, width: `${r.width}%`, height: 20, borderRadius: 4, background: r.bg, color: r.color, border: `1px solid ${r.color}`, display: 'flex', alignItems: 'center', padding: '0 8px', fontSize: 10, fontWeight: 500, overflow: 'hidden', whiteSpace: 'nowrap', cursor: 'pointer' }}>{r.label}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Panel>
+      </div>
+    );
+  };
+
+  /* ── REPORTS VIEW ── */
+  const trafficData = [{ m: 'Oct', v: 6 }, { m: 'Nov', v: 8 }, { m: 'Dec', v: 7 }, { m: 'Jan', v: 9 }, { m: 'Feb', v: 10 }, { m: 'Mar', v: 12 }];
+  const taskStatusData = COL_STAT.map(s => ({ name: COL_LABELS[s], value: tasks.filter(t => t.status === s).length }));
+  const taskStatusColors = [COLORS.gray, COLORS.blue, COLORS.amber, COLORS.purple, COLORS.green];
+  const pipelineData = [{ name: 'ETL', v: 124 }, { name: 'Cleanup', v: 45 }, { name: 'Report', v: 38 }, { name: 'Migration', v: 28 }, { name: 'Automation', v: 18 }];
+  const pipelineColors = [COLORS.blue, COLORS.teal, COLORS.burg, COLORS.purple, COLORS.green];
+  const qualityData = Array.from({ length: 12 }, (_, i) => ({ w: `Wk ${i + 1}`, v: [91, 92, 90, 93, 92, 94, 93, 95, 94, 96, 95, 96.4][i] }));
+  const projProgressData = projects.map(p => ({ name: p.name.length > 22 ? p.name.slice(0, 22) + '…' : p.name, pct: p.pct, fill: p.color }));
+
+  const ReportsView = () => (
+    <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+      <div style={{ marginBottom: 20 }}><h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal, marginBottom: 4 }}>Reports & Analytics</h2><p style={{ color: '#5A5860', fontSize: 12 }}>Data team performance metrics — March 2025</p></div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
+        <StatCard label="Dashboards Delivered" value="12" delta="↑ 3 MoM" up />
+        <StatCard label="Data Pipelines Active" value="34" delta="↑ 6 MoM" up />
+        <StatCard label="Avg Query Performance" value="1.2s" delta="↓ 0.4s improved" up />
+        <StatCard label="Data Quality Score" value="96.4%" delta="↑ 1.8pp MoM" up />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+        <Panel title="Dashboards Delivered — Last 6 Months"><div style={{ height: 220 }}>
+          <ResponsiveContainer><LineChart data={trafficData}><CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" /><XAxis dataKey="m" tick={{ fill: '#848688', fontSize: 11 }} /><YAxis tick={{ fill: '#848688', fontSize: 11 }} /><Tooltip /><Line type="monotone" dataKey="v" stroke={COLORS.burg} strokeWidth={2} dot={{ fill: COLORS.burg, r: 4 }} /></LineChart></ResponsiveContainer>
+        </div></Panel>
+        <Panel title="Task Status Breakdown"><div style={{ height: 220 }}>
+          <ResponsiveContainer><PieChart><Pie data={taskStatusData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={2} dataKey="value">{taskStatusData.map((_, i) => <Cell key={i} fill={taskStatusColors[i]} />)}</Pie><Legend wrapperStyle={{ fontSize: 11 }} /></PieChart></ResponsiveContainer>
+        </div></Panel>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+        <Panel title="Pipeline Runs by Type"><div style={{ height: 220 }}>
+          <ResponsiveContainer><BarChart data={pipelineData}><CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" /><XAxis dataKey="name" tick={{ fill: '#848688', fontSize: 11 }} /><YAxis tick={{ fill: '#848688', fontSize: 11 }} /><Tooltip /><Bar dataKey="v" radius={[4, 4, 0, 0]}>{pipelineData.map((_, i) => <Cell key={i} fill={pipelineColors[i]} />)}</Bar></BarChart></ResponsiveContainer>
+        </div></Panel>
+        <Panel title="Data Quality Trend — Weekly"><div style={{ height: 220 }}>
+          <ResponsiveContainer><LineChart data={qualityData}><CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" /><XAxis dataKey="w" tick={{ fill: '#848688', fontSize: 11 }} /><YAxis domain={[88, 100]} tick={{ fill: '#848688', fontSize: 11 }} /><Tooltip /><Line type="monotone" dataKey="v" stroke={COLORS.green} strokeWidth={2} dot={{ fill: COLORS.green, r: 3 }} /></LineChart></ResponsiveContainer>
+        </div></Panel>
+      </div>
+      <Panel title="Project Progress Overview"><div style={{ height: 200 }}>
+        <ResponsiveContainer><BarChart layout="vertical" data={projProgressData}><CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" /><XAxis type="number" domain={[0, 100]} tick={{ fill: '#848688', fontSize: 11 }} tickFormatter={v => v + '%'} /><YAxis type="category" dataKey="name" tick={{ fill: '#848688', fontSize: 11 }} width={160} /><Tooltip /><Bar dataKey="pct" radius={[0, 4, 4, 0]}>{projProgressData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar></BarChart></ResponsiveContainer>
+      </div></Panel>
+    </div>
+  );
+
+  /* ── NOTIFICATIONS VIEW ── */
+  const NotifsView = () => {
+    const notifs = [
+      { unread: true, text: <>Toluwalase completed <strong>Power BI Inventory Dashboard</strong> draft — ready for review.</>, time: '15 minutes ago' },
+      { unread: true, text: <>Sharon submitted <strong>Data Migration Phase 1 validation</strong> report. All checks passed.</>, time: '1 hour ago' },
+      { unread: true, text: <><strong>Deadline Tomorrow:</strong> Power BI Inventory Dashboard is due March 25.</>, time: '3 hours ago' },
+      { unread: false, text: <>John completed <strong>Weekly Snapshot ETL pipeline</strong> — automated run successful.</>, time: 'Yesterday, 4:30 PM' },
+      { unread: false, text: <>Deborah moved <strong>Customer Data Cleanup</strong> to Done. 4,200 records processed.</>, time: 'Yesterday, 2:15 PM' },
+    ];
+    return (
+      <div style={{ flex: 1, overflowY: 'auto', padding: 20, maxWidth: 680 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}><h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal }}>Notifications</h2><span style={{ background: COLORS.burg, color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 20, padding: '1px 6px' }}>3</span><div style={{ marginLeft: 'auto' }}><Btn sm>Mark all read</Btn></div></div>
+        {notifs.map((n, i) => (
+          <div key={i}>
+            {i === 3 && <div style={{ height: 1, background: '#E2E0E5', margin: '10px 0' }} />}
+            <div style={{ display: 'flex', gap: 9, padding: '10px 12px', borderRadius: 6, background: n.unread ? COLORS.burgDim : 'transparent', cursor: 'pointer', marginBottom: 4 }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: n.unread ? COLORS.burg : 'transparent', flexShrink: 0, marginTop: 5 }} />
+              <div style={{ flex: 1 }}><div style={{ fontSize: 12, color: '#2A2829', marginBottom: 2, lineHeight: 1.4 }}>{n.text}</div><div style={{ fontSize: 10, color: '#918E98' }}>{n.time}</div></div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  /* ═══════ TEAM CHAT VIEW ═══════ */
+  // Real-time team-wide chat room powered by Socket.io.
+  // Messages are saved to the database so history is preserved across sessions.
+  // Desktop notifications fire when a new message arrives and this tab isn't active.
+  const ChatView = () => {
+    const [messages, setMessages] = useState([]);
+    const [text, setText]         = useState('');
+    const [loading, setLoading]   = useState(true);
+    const bottomRef               = useRef(null); // used to auto-scroll to latest message
+
+    // ── Load recent history on mount ───────────────────────────
+    useEffect(() => {
+      API.getChatHistory()
+        .then(res => setMessages(res.data.messages))
+        .catch(err => console.error('Chat history error:', err.message))
+        .finally(() => setLoading(false));
+
+      // Clear the unread badge while the chat view is open
+      setUnreadChat(0);
+    }, []);
+
+    // ── Listen for new messages over the socket ─────────────────
+    useEffect(() => {
+      if (!socket) return;
+      const handler = (msg) => {
+        setMessages(prev => [...prev, msg]);
+        // If the user is looking at a different view, increment the badge
+        // and fire a desktop notification for messages from others
+        if (msg.user_id !== authUser?.id) {
+          showDesktopNotification(
+            `${msg.name} in Team Chat`,
+            msg.content,
+          );
+        }
+      };
+      socket.on('chat:message', handler);
+      return () => socket.off('chat:message', handler);
+    }, [socket]);
+
+    // ── Auto-scroll to the bottom when messages change ──────────
+    useEffect(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages]);
+
+    const handleSend = () => {
+      if (!text.trim() || !socket) return;
+      socket.emit('chat:send', { content: text.trim() });
+      setText('');
+    };
+
+    const fmt = iso => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const fmtDate = iso => new Date(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+
+    // Group messages — show a date separator when the day changes
+    const grouped = messages.reduce((acc, msg, i) => {
+      const day = fmtDate(msg.created_at);
+      if (i === 0 || fmtDate(messages[i - 1].created_at) !== day) acc.push({ type: 'date', label: day });
+      acc.push({ type: 'msg', ...msg });
+      return acc;
+    }, []);
+
+    const isOwn = (msg) => msg.user_id === authUser?.id;
+
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+        {/* ── Room header ── */}
+        <div style={{ padding: '12px 20px', borderBottom: '1px solid #E2E0E5', display: 'flex', alignItems: 'center', gap: 10, background: '#fff' }}>
+          <div style={{ width: 34, height: 34, borderRadius: 10, background: COLORS.burgDim, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <MessageSquare size={16} color={COLORS.burg} />
+          </div>
+          <div>
+            <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 14, fontWeight: 700, color: COLORS.charcoal }}>Data Team</div>
+            <div style={{ fontSize: 11, color: '#918E98' }}>{Object.keys(members).length} members · team-wide channel</div>
+          </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+            {Object.keys(members).slice(0, 5).map(k => <Avatar key={k} k={k} size={24} />)}
+          </div>
+        </div>
+
+        {/* ── Message list ── */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {loading ? (
+            <div style={{ margin: 'auto', color: '#C4C2C8', fontSize: 13 }}>Loading messages…</div>
+          ) : messages.length === 0 ? (
+            <div style={{ margin: 'auto', textAlign: 'center', color: '#C4C2C8' }}>
+              <MessageSquare size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
+              <div style={{ fontSize: 13 }}>No messages yet — say hello 👋</div>
+            </div>
+          ) : (
+            grouped.map((item, i) => item.type === 'date' ? (
+              // ── Date separator ──
+              <div key={`d${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '12px 0 8px' }}>
+                <div style={{ flex: 1, height: 1, background: '#E2E0E5' }} />
+                <span style={{ fontSize: 10, color: '#C4C2C8', textTransform: 'uppercase', letterSpacing: 0.6, whiteSpace: 'nowrap' }}>{item.label}</span>
+                <div style={{ flex: 1, height: 1, background: '#E2E0E5' }} />
+              </div>
+            ) : (
+              // ── Chat bubble ──
+              <div key={item.id} style={{ display: 'flex', gap: 9, alignItems: 'flex-end', flexDirection: isOwn(item) ? 'row-reverse' : 'row', marginBottom: 6 }}>
+                {!isOwn(item) && <Avatar k={item.initials} size={28} style={{ flexShrink: 0 }} />}
+                <div style={{ maxWidth: '68%' }}>
+                  {!isOwn(item) && (
+                    <div style={{ fontSize: 11, color: '#918E98', marginBottom: 3, marginLeft: 4 }}>{item.name}</div>
+                  )}
+                  <div style={{
+                    padding: '9px 13px', borderRadius: isOwn(item) ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+                    background: isOwn(item) ? COLORS.burg : '#F4F3F5',
+                    color: isOwn(item) ? '#fff' : '#2A2829',
+                    fontSize: 13, lineHeight: 1.5,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                  }}>
+                    {item.content}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#C4C2C8', marginTop: 3, textAlign: isOwn(item) ? 'right' : 'left', marginLeft: isOwn(item) ? 0 : 4 }}>
+                    {fmt(item.created_at)}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+          {/* Invisible anchor — scrolled into view on new messages */}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* ── Message input ── */}
+        <div style={{ padding: '12px 20px', borderTop: '1px solid #E2E0E5', background: '#fff' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+            <Avatar k={authUser?.initials || 'SO'} size={32} style={{ flexShrink: 0, marginBottom: 1 }} />
+            <div style={{ flex: 1 }}>
+              <textarea
+                value={text}
+                onChange={e => setText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                placeholder="Message the team… (Enter to send, Shift+Enter for new line)"
+                rows={2}
+                style={{ ...inputStyle, resize: 'none', fontSize: 13, padding: '9px 12px', width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+            <button
+              onClick={handleSend}
+              disabled={!text.trim() || !socket}
+              title="Send message"
+              style={{
+                width: 38, height: 38, borderRadius: 10, flexShrink: 0, marginBottom: 1,
+                background: text.trim() && socket ? COLORS.burg : '#E2E0E5',
+                border: 'none', cursor: text.trim() && socket ? 'pointer' : 'not-allowed',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'background .15s',
+              }}
+            >
+              <Send size={16} color={text.trim() && socket ? '#fff' : '#C4C2C8'} />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /* ═══════ ADMIN VIEW (admin role only) ═══════ */
+  // NON-DEVELOPER GUIDE:
+  //   • This view is only visible to users whose role is 'admin' in the database.
+  //   • Regular members do not see the "Admin Panel" link in the sidebar at all.
+  //   • To grant a user admin rights: log in as an existing admin → Team → ↑ Admin button.
+  const AdminView = () => {
+    // Extra safety: block the view even if somehow a non-admin navigates here
+    if (authUser?.role !== 'admin') return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: '#918E98' }}>
+        <ShieldCheck size={40} style={{ opacity: 0.25 }} />
+        <div style={{ fontSize: 13 }}>You need admin rights to access this page.</div>
+      </div>
+    );
+
+    // ── Quick stats derived from live data ──────────────────────
+    const adminCount     = rawUsers.filter(u => u.role === 'admin').length;
+    const totalDone      = tasks.filter(t => t.status === 'done').length;
+    const totalOpen      = tasks.filter(t => t.status !== 'done').length;
+
+    return (
+      <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+
+        {/* ── Page header ── */}
+        <div style={{ marginBottom: 20 }}>
+          <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal, marginBottom: 4 }}>Admin Panel</h2>
+          <p style={{ color: '#5A5860', fontSize: 12 }}>Manage users, roles, and passwords. Only admins can see this page.</p>
+        </div>
+
+        {/* ── System stat cards ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 24 }}>
+          <StatCard label="Team Members"    value={rawUsers.length} />
+          <StatCard label="Admin Users"     value={adminCount} />
+          <StatCard label="Open Tasks"      value={totalOpen} />
+          <StatCard label="Completed Tasks" value={totalDone} />
+        </div>
+
+        {/* ── User management table ── */}
+        <Panel>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 15, fontWeight: 600, color: COLORS.charcoal }}>User Management</div>
+              <div style={{ fontSize: 11, color: '#918E98', marginTop: 2 }}>Add members, change roles, reset passwords, or remove accounts.</div>
+            </div>
+            <Btn primary sm onClick={() => setAddMemberModal(true)}><Plus size={12} /> Add Member</Btn>
+          </div>
+
+          {/* Table header */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.6fr 80px 1.1fr 90px auto', gap: 8, padding: '6px 10px', borderBottom: '2px solid #E2E0E5', fontSize: 10, color: '#918E98', textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>
+            <div>Member</div><div>Email</div><div>Role</div><div>Job Title</div><div>Status</div><div style={{ textAlign: 'right' }}>Actions</div>
+          </div>
+
+          {/* One row per user */}
+          {rawUsers.map(u => {
+            const mc    = MEMBER_COLORS[u.initials] || { bg: '#EBEAED', fg: '#5A5860' };
+            const isSelf = authUser?.id === u.id;
+            const isAdm  = u.role === 'admin';
+            return (
+              <div key={u.id} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.6fr 80px 1.1fr 90px auto', gap: 8, padding: '10px 10px', borderBottom: '1px solid #F4F3F5', alignItems: 'center', fontSize: 12 }}>
+
+                {/* Name + initials avatar */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: '50%', background: mc.bg, color: mc.fg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, fontFamily: "'Syne',sans-serif", flexShrink: 0 }}>{u.initials}</div>
+                  <div>
+                    <div style={{ fontWeight: 500, color: '#2A2829' }}>{u.name}</div>
+                    {isSelf && <div style={{ fontSize: 9, color: COLORS.burg, fontWeight: 600, marginTop: 1 }}>You</div>}
+                  </div>
+                </div>
+
+                {/* Email — truncated if long */}
+                <div style={{ color: '#5A5860', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 }}>{u.email}</div>
+
+                {/* Role badge */}
+                <div>
+                  <span style={{ fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: isAdm ? COLORS.burgDim : '#EBEAED', color: isAdm ? COLORS.burg : '#5A5860' }}>
+                    {isAdm ? 'Admin' : 'Member'}
+                  </span>
+                </div>
+
+                {/* Job title */}
+                <div style={{ color: '#5A5860', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.job_title || '—'}</div>
+
+                {/* Status */}
+                <div>
+                  <span style={{ fontSize: 10, fontWeight: 500, padding: '3px 8px', borderRadius: 20, background: COLORS.greenD, color: COLORS.green }}>
+                    {u.status || 'Online'}
+                  </span>
+                </div>
+
+                {/* Action buttons */}
+                <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                  {/* Edit profile (name, job title, status) */}
+                  <Btn sm title="Edit profile"
+                    onClick={() => setMemberModal({ key: u.initials, name: u.name, email: u.email || '', role: u.job_title || '', status: u.status || 'Online', ...members[u.initials] })}>
+                    <Pencil size={11} />
+                  </Btn>
+                  {/* Reset password */}
+                  <Btn sm title="Reset password"
+                    onClick={() => setResetPassModal({ userId: u.id, userName: u.name, initials: u.initials })}
+                    style={{ fontSize: 11 }}>
+                    🔑
+                  </Btn>
+                  {/* Promote / demote — not shown for yourself (can't remove own admin) */}
+                  {!isSelf && (
+                    <Btn sm title={isAdm ? 'Remove admin rights' : 'Make admin'}
+                      style={{ fontSize: 10, padding: '4px 8px' }}
+                      onClick={() => changeUserRole(u.initials, isAdm ? 'member' : 'admin')}>
+                      {isAdm ? '↓ Member' : '↑ Admin'}
+                    </Btn>
+                  )}
+                  {/* Delete account — not shown for yourself */}
+                  {!isSelf && (
+                    <Btn sm danger title="Remove user"
+                      onClick={() => setConfirmModal({
+                        title: 'Remove member?',
+                        body: `${u.name} will be removed from the team and lose access to the dashboard.`,
+                        onConfirm: async () => { await removeMember(u.initials); setConfirmModal(null); },
+                      })}>
+                      <Trash2 size={11} />
+                    </Btn>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </Panel>
+      </div>
+    );
+  };
+
+  /* ═══════ TASK MODAL FORM ═══════ */
+  const TaskModalForm = () => {
+    const editing = taskModal?.id;
+    const [form, setForm] = useState({
+      title: taskModal?.title || '', desc: taskModal?.desc || '', dept: taskModal?.dept || 'bu',
+      ass: taskModal?.ass || 'SO', pri: taskModal?.pri || 'm', due: taskModal?.due || '',
+      status: taskModal?.status || 'backlog', camp: taskModal?.camp || 'Data Migration', collabs: taskModal?.collabs || [],
+    });
+    const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    return (
+      <Modal open title={editing ? 'Edit Task' : 'Create New Task'} subtitle="Add a task to the board and assign it to the right team member."
+        onClose={() => setTaskModal(null)}
+        footer={<><Btn onClick={() => setTaskModal(null)}>Cancel</Btn><Btn primary onClick={() => { if (!form.title.trim()) return; submitTask(editing ? { ...form, id: taskModal.id } : form); }}>{editing ? 'Save Changes' : 'Create Task'}</Btn></>}>
+        <FormField label="Task Title *"><input style={inputStyle} value={form.title} onChange={e => upd('title', e.target.value)} placeholder="e.g. Build DAX measures for sales report" /></FormField>
+        <FormField label="Description"><textarea style={{ ...inputStyle, minHeight: 72, resize: 'vertical' }} value={form.desc} onChange={e => upd('desc', e.target.value)} placeholder="What needs to be done?" /></FormField>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <FormField label="Project"><select style={inputStyle} value={form.camp} onChange={e => upd('camp', e.target.value)}>
+            {['Data Migration', 'Power BI Inventory Dashboard', 'Power BI Sales Dashboard', 'Power BI Customer Performance Dashboard', 'Weekly Snapshot', 'Process Automation', '—'].map(o => <option key={o} value={o}>{o}</option>)}
+          </select></FormField>
+          <FormField label="Department"><select style={inputStyle} value={form.dept} onChange={e => upd('dept', e.target.value)}><option value="bu">BU</option><option value="bg">BG</option></select></FormField>
+          <FormField label="Assigned To"><select style={inputStyle} value={form.ass} onChange={e => upd('ass', e.target.value)}>
+            {Object.entries(MEMBER_NAMES).map(([k, n]) => <option key={k} value={k}>{n} — {MEMBER_ROLES[k]}</option>)}
+          </select></FormField>
+          <FormField label="Priority"><select style={inputStyle} value={form.pri} onChange={e => upd('pri', e.target.value)}><option value="h">High</option><option value="m">Medium</option><option value="l">Low</option></select></FormField>
+          <FormField label="Due Date"><input style={inputStyle} value={form.due} onChange={e => upd('due', e.target.value)} placeholder="e.g. Apr 5" /></FormField>
+          <FormField label="Status"><select style={inputStyle} value={form.status} onChange={e => upd('status', e.target.value)}>
+            {COL_STAT.filter(s => s !== 'done').map(s => <option key={s} value={s}>{COL_LABELS[s]}</option>)}
+          </select></FormField>
+        </div>
+      </Modal>
+    );
+  };
+
+  /* ═══════ PROJECT MODAL FORM ═══════ */
+  const ProjModalForm = () => {
+    const editing = projModal?.id;
+    const [form, setForm] = useState({
+      name: projModal?.name || '', desc: projModal?.desc || '', type: projModal?.type || 'Dashboard / Report',
+      status: projModal?.status || 'planning', start: projModal?.start || '', due: projModal?.due || '',
+      members: projModal?.members || ['SO'], pct: projModal?.pct || 0, tags: projModal?.tags || ['BU'],
+    });
+    const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    return (
+      <Modal open title={editing ? 'Edit Project' : 'Launch New Project'} subtitle="Define project details, scope, team members and timeline."
+        onClose={() => setProjModal(null)}
+        footer={<><Btn onClick={() => setProjModal(null)}>Cancel</Btn><Btn primary onClick={() => { if (!form.name.trim()) return; submitProject(editing ? { ...form, id: projModal.id, color: projModal.color } : { ...form, open: 0 }); }}>{editing ? 'Save Changes' : 'Launch Project'}</Btn></>}>
+        <FormField label="Project Name *"><input style={inputStyle} value={form.name} onChange={e => upd('name', e.target.value)} placeholder="e.g. Power BI Finance Dashboard" /></FormField>
+        <FormField label="Description / Goals"><textarea style={{ ...inputStyle, minHeight: 72, resize: 'vertical' }} value={form.desc} onChange={e => upd('desc', e.target.value)} /></FormField>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <FormField label="Project Type"><select style={inputStyle} value={form.type} onChange={e => upd('type', e.target.value)}>
+            {['Dashboard / Report', 'Data Migration', 'ETL Pipeline', 'Process Automation', 'Data Cleanup', 'Analytics'].map(o => <option key={o}>{o}</option>)}
+          </select></FormField>
+          <FormField label="Status"><select style={inputStyle} value={form.status} onChange={e => upd('status', e.target.value)}>
+            {['planning', 'active', 'review', 'draft'].map(s => <option key={s} value={s}>{STATUS_PILLS[s].label}</option>)}
+          </select></FormField>
+          <FormField label="Start Date"><input style={inputStyle} value={form.start} onChange={e => upd('start', e.target.value)} placeholder="e.g. Apr 1, 2025" /></FormField>
+          <FormField label="Due Date"><input style={inputStyle} value={form.due} onChange={e => upd('due', e.target.value)} placeholder="e.g. May 30, 2025" /></FormField>
+          <FormField label="Lead"><select style={inputStyle} value={form.members[0]} onChange={e => upd('members', [e.target.value])}>
+            {Object.entries(MEMBER_NAMES).map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+          </select></FormField>
+          <FormField label={`Progress ${form.pct}%`}><input type="range" min={0} max={100} value={form.pct} onChange={e => upd('pct', parseInt(e.target.value))} style={{ width: '100%', accentColor: COLORS.burg }} /></FormField>
+        </div>
+      </Modal>
+    );
+  };
+
+  /* ═══════ MEMBER MODAL ═══════ */
+  const MemberModalForm = () => {
+    const [form, setForm]       = useState({
+      name:   memberModal?.name   || '',
+      email:  memberModal?.email  || '',
+      role:   memberModal?.role   || '',
+      status: memberModal?.status || 'Online',
+    });
+    const [uploading, setUploading] = useState(false);
+    const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+    const canEditEmail = authUser?.role === 'admin' || authUser?.initials === memberModal?.key;
+
+    // ── Photo upload handler ────────────────────────────────────
+    const handlePhotoChange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      setUploading(true);
+      try {
+        const fd = new FormData();
+        fd.append('avatar', file);
+        const userId = rawUsers.find(u => u.initials === memberModal.key)?.id;
+        const res    = await API.uploadAvatar(userId, fd);
+        // Update the global map + rawUsers so the photo appears immediately everywhere
+        AVATAR_URLS[memberModal.key] = res.data.avatar_url;
+        setRawUsers(us => us.map(u =>
+          u.initials === memberModal.key ? { ...u, avatar_url: res.data.avatar_url } : u
+        ));
+      } catch (err) {
+        alert(err.response?.data?.error || 'Photo upload failed. Max size is 3 MB.');
+      } finally {
+        setUploading(false);
+      }
+    };
+
+    return (
+      <Modal open title="Edit Team Member" subtitle="Update profile photo, name, email and status."
+        onClose={() => setMemberModal(null)}
+        footer={<><Btn onClick={() => setMemberModal(null)}>Cancel</Btn><Btn primary onClick={() => { if (!form.name || !form.role) return; saveMember(memberModal.key, form); }}>Save Changes</Btn></>}>
+
+        {/* ── Profile photo picker ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 18, padding: '12px 14px', background: '#F4F3F5', borderRadius: 8 }}>
+          {/* Clicking the avatar opens the file picker via the hidden input below */}
+          <label htmlFor="avatar-file-input" style={{ cursor: 'pointer', position: 'relative', flexShrink: 0 }} title="Click to change photo">
+            <Avatar k={memberModal.key} size={56} />
+            {/* Camera icon overlay */}
+            <div style={{
+              position: 'absolute', bottom: 0, right: 0,
+              width: 18, height: 18, borderRadius: '50%',
+              background: COLORS.burg, color: '#fff',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 10, fontWeight: 700, border: '2px solid #fff',
+            }}>📷</div>
+            <input
+              id="avatar-file-input"
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              style={{ display: 'none' }}
+              onChange={handlePhotoChange}
+            />
+          </label>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500, color: COLORS.charcoal }}>{form.name || memberModal.key}</div>
+            <div style={{ fontSize: 11, color: '#918E98', marginTop: 2 }}>
+              {uploading ? '⏳ Uploading…' : 'Click the photo to upload a new one (JPG, PNG · max 3 MB)'}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Text fields ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <FormField label="Full Name *">
+            <input style={inputStyle} value={form.name} onChange={e => upd('name', e.target.value)} />
+          </FormField>
+          <FormField label="Job Title *">
+            <input style={inputStyle} value={form.role} onChange={e => upd('role', e.target.value)} placeholder="e.g. Data Analyst" />
+          </FormField>
+          {canEditEmail && (
+            <FormField label="Email address">
+              <input type="email" style={inputStyle} value={form.email}
+                onChange={e => upd('email', e.target.value)}
+                placeholder="name@tdafrica.com" />
+            </FormField>
+          )}
+          <FormField label="Status">
+            <select style={inputStyle} value={form.status} onChange={e => upd('status', e.target.value)}>
+              <option>Online</option><option>Away</option><option>In Meeting</option>
+              <option>Focused</option><option>Out of Office</option>
+            </select>
+          </FormField>
+        </div>
+      </Modal>
+    );
+  };
+
+  /* ═══════ ADD MEMBER MODAL (admin only) ═══════ */
+  const AddMemberForm = () => {
+    const [form, setForm] = useState({ name: '', email: '', password: '', job_title: '', role: 'member', initials: '' });
+    const [showPw, setShowPw] = useState(false);
+    const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    // Auto-generate initials as the name is typed
+    const handleName = (v) => {
+      const auto = v.trim().split(/\s+/).map(w => w[0]?.toUpperCase() || '').slice(0, 2).join('');
+      setForm(f => ({ ...f, name: v, initials: f.initials || auto }));
+    };
+    return (
+      <Modal open title="Add Team Member" subtitle="Create an account for a new team member. They can log in immediately."
+        onClose={() => setAddMemberModal(false)}
+        footer={<><Btn onClick={() => setAddMemberModal(false)}>Cancel</Btn><Btn primary onClick={() => { if (!form.name || !form.email || !form.password) return; addMember(form); }}>Create Account</Btn></>}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <FormField label="Full Name *"><input style={inputStyle} value={form.name} onChange={e => handleName(e.target.value)} placeholder="e.g. Jane Doe" /></FormField>
+          <FormField label="Initials (auto)"><input style={inputStyle} value={form.initials} onChange={e => upd('initials', e.target.value.toUpperCase().slice(0,3))} placeholder="e.g. JD" /></FormField>
+          <FormField label="Email *"><input style={inputStyle} type="email" value={form.email} onChange={e => upd('email', e.target.value)} placeholder="jane@tdafrica.com" /></FormField>
+          <FormField label="Job Title"><input style={inputStyle} value={form.job_title} onChange={e => upd('job_title', e.target.value)} placeholder="e.g. Data Analyst" /></FormField>
+          <FormField label="Password *">
+            <div style={{ position: 'relative' }}>
+              <input style={{ ...inputStyle, paddingRight: 36 }} type={showPw ? 'text' : 'password'} value={form.password} onChange={e => upd('password', e.target.value)} placeholder="Set a temporary password" />
+              <button type="button" onClick={() => setShowPw(v => !v)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#848688', padding: 0 }}>
+                {showPw ? '🙈' : '👁️'}
+              </button>
+            </div>
+          </FormField>
+          <FormField label="Role"><select style={inputStyle} value={form.role} onChange={e => upd('role', e.target.value)}><option value="member">Member</option><option value="admin">Admin</option></select></FormField>
+        </div>
+        <div style={{ marginTop: 8, padding: '10px 12px', background: '#F4F3F5', borderRadius: 6, fontSize: 12, color: '#5A5860' }}>
+          The member will log in at <strong>this app's URL</strong> using their email and the password you set here. Advise them to change it after first login.
+        </div>
+      </Modal>
+    );
+  };
+
+  /* ═══════ RESET PASSWORD MODAL (admin only) ═══════ */
+  // Lets an admin set a brand-new password for any team member.
+  // The user does not need to know their old password — admin override.
+  const ResetPassModal = () => {
+    const [pass, setPass]       = useState('');
+    const [confirm, setConfirm] = useState('');
+    const [err, setErr]         = useState('');
+    const [saving, setSaving]   = useState(false);
+
+    const handleReset = async () => {
+      // ── Basic validation ───────────────────────────────────────
+      if (!pass)          return setErr('Please enter a new password.');
+      if (pass.length < 8) return setErr('Password must be at least 8 characters.');
+      if (pass !== confirm) return setErr('Passwords do not match. Please re-type.');
+      setSaving(true);
+      try {
+        await API.updateUser(resetPassModal.userId, { password: pass });
+        // ── DEBUG: confirm in console ──────────────────────────
+        console.log(`🔑 Password reset for ${resetPassModal.userName}`);
+        setResetPassModal(null);
+      } catch (e) {
+        setErr(e.response?.data?.error || 'Failed to reset password. Try again.');
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    return (
+      <Modal open
+        title="Reset Password"
+        subtitle={`Set a new password for ${resetPassModal?.userName}.`}
+        onClose={() => setResetPassModal(null)}
+        footer={
+          <>
+            <Btn onClick={() => setResetPassModal(null)}>Cancel</Btn>
+            <Btn primary onClick={handleReset} disabled={saving}>{saving ? 'Saving…' : 'Reset Password'}</Btn>
+          </>
+        }>
+        <FormField label="New Password">
+          <input type="password" style={inputStyle} value={pass}
+            onChange={e => { setPass(e.target.value); setErr(''); }}
+            placeholder="Min. 8 characters" autoFocus />
+        </FormField>
+        <FormField label="Confirm New Password">
+          <input type="password" style={inputStyle} value={confirm}
+            onChange={e => { setConfirm(e.target.value); setErr(''); }}
+            placeholder="Type the password again" />
+        </FormField>
+        {err && (
+          <div style={{ marginTop: 4, padding: '8px 12px', borderRadius: 6, background: COLORS.redD, border: `1px solid #F5C6C6`, fontSize: 12, color: COLORS.red }}>
+            {err}
+          </div>
+        )}
+      </Modal>
+    );
+  };
+
+  /* ═══════ CONFIRM MODAL ═══════ */
+  const ConfirmModalComp = () => (
+    <Modal open onClose={() => setConfirmModal(null)} title={confirmModal?.title} footer={<><Btn sm onClick={() => setConfirmModal(null)}>Cancel</Btn><Btn sm danger onClick={confirmModal?.onConfirm}>Delete</Btn></>}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <div style={{ width: 44, height: 44, borderRadius: '50%', background: COLORS.redD, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><AlertCircle size={20} color={COLORS.red} /></div>
+      </div>
+      <p style={{ fontSize: 13, color: '#5A5860' }}>{confirmModal?.body}</p>
+    </Modal>
+  );
+
+  /* ═══════ RENDER ═══════ */
+  const views = { dashboard: <DashboardView />, projects: <ProjectsView />, tasks: <TaskBoardView />, team: <TeamView />, calendar: <CalendarView />, timeline: <TimelineView />, reports: <ReportsView />, notifs: <NotifsView />, chat: <ChatView />, admin: <AdminView /> };
+
+  return (
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: '#2A2829', background: '#FEFEFE' }}>
+      <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+      <Sidebar />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ height: 54, minHeight: 54, background: '#fff', borderBottom: '1px solid #E2E0E5', display: 'flex', alignItems: 'center', gap: 12, padding: '0 20px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+          <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 700, flex: 1, color: COLORS.charcoal }}>{VTITLES[view]}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#F4F3F5', border: '1px solid #E2E0E5', borderRadius: 6, padding: '6px 12px', color: '#5A5860', fontSize: 13, minWidth: 200 }}><Search size={13} style={{ opacity: 0.5 }} /> Search tasks, projects...</div>
+          <Btn sm onClick={() => setTaskModal({})}><Plus size={12} /> New Task</Btn>
+          <Btn primary sm onClick={() => setProjModal({})}><Plus size={12} /> New Project</Btn>
+        </div>
+        {views[view]}
+      </div>
+      {taskModal && <TaskModalForm />}
+      {projModal && <ProjModalForm />}
+      {memberModal && <MemberModalForm />}
+      {addMemberModal && <AddMemberForm />}
+      {confirmModal && <ConfirmModalComp />}
+      {resetPassModal && <ResetPassModal />}
+    </div>
+  );
+}

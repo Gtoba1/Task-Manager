@@ -141,11 +141,23 @@ const DeptTag = ({ dept }) => {
 
 const Tag = ({ children }) => <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 20, background: '#EBEAED', color: '#918E98' }}>{children}</span>;
 
-const ProgressBar = ({ pct, color, width }) => (
+// pctToTrafficColor: red < 40%, amber 40–69%, green ≥ 70%
+// Used for the "traffic light" progress bar variant on project cards.
+const pctToTrafficColor = (pct) => {
+  if (pct >= 70) return '#22A55A'; // green
+  if (pct >= 40) return '#C88A18'; // amber
+  return '#B83B3B';                // red
+};
+
+// Pass traffic={true} to get the red→amber→green colour instead of the project brand colour.
+const ProgressBar = ({ pct, color, width, traffic }) => {
+  const barColor = traffic ? pctToTrafficColor(pct) : color;
+  return (
   <div style={{ background: '#F4F3F5', borderRadius: 4, height: 5, overflow: 'hidden', width: width || '100%' }}>
-    <div style={{ height: '100%', borderRadius: 4, width: `${pct}%`, background: color, transition: 'width 0.3s' }} />
+    <div style={{ height: '100%', borderRadius: 4, width: `${pct}%`, background: barColor, transition: 'width 0.3s' }} />
   </div>
-);
+  );
+};
 
 const StatCard = ({ label, value, delta, up }) => (
   <div style={{ background: '#fff', border: '1px solid #E2E0E5', borderRadius: 10, padding: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
@@ -328,7 +340,8 @@ export default function App() {
 
   const openTasks    = tasks.filter(t => t.status !== 'done').length;
   const doneTasks    = tasks.filter(t => t.status === 'done').length;
-  const activeProjects = projects.filter(p => p.status === 'active').length;
+  // "Ongoing" = any project not yet completed (includes planning, active, on-hold, draft)
+  const activeProjects = projects.filter(p => p.status !== 'completed').length;
   const activeTask   = tasks.find(t => t.id === activeTaskId);
 
   /* ── TASK ACTIONS ── */
@@ -425,6 +438,22 @@ export default function App() {
       }
     } catch (err) { console.error('Submit project failed:', err.message); }
     setProjModal(null);
+  };
+
+  // +/– progress buttons on the dashboard and projects view.
+  // Optimistic update: state updates immediately; reverted on API failure.
+  const adjustProgress = async (projectId, delta) => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return;
+    const newPct = Math.max(0, Math.min(100, (project.pct || 0) + delta));
+    if (newPct === project.pct) return; // already at boundary, nothing to do
+    setProjects(ps => ps.map(p => p.id === projectId ? { ...p, pct: newPct } : p));
+    try {
+      await API.updateProject(projectId, { progress: newPct });
+    } catch (err) {
+      console.error('Progress update failed:', err.message);
+      setProjects(ps => ps.map(p => p.id === projectId ? { ...p, pct: project.pct } : p));
+    }
   };
 
   const saveMember = async (key, data) => {
@@ -604,16 +633,37 @@ export default function App() {
       if (diff <= 7)  return { label: `In ${diff} days`, color: COLORS.amber };
       return                 { label: str,               color: '#918E98' };
     };
-    const upcoming = tasks
+    // Include both task deadlines and project due dates in the upcoming panel
+    const upcomingTasks = tasks
       .filter(t => !['done', 'approved'].includes(t.status) && (t.due_date || t.due))
-      .map(t => { const due = t.due_date || t.due; return { ...t, _d: parseTaskDate(due), _due: due }; })
-      .filter(t => t._d)
+      .map(t => { const due = t.due_date || t.due; return { _type: 'task', id: t.id, title: t.title, subLabel: MEMBER_NAMES[t.ass] || MEMBER_NAMES[t.assignee_initials] || 'Unassigned', _d: parseTaskDate(due), _due: due }; })
+      .filter(t => t._d);
+
+    const upcomingProjects = projects
+      .filter(p => p.status !== 'completed' && (p.due_date || p.due) && (p.due_date || p.due) !== 'Ongoing')
+      .map(p => { const due = p.due_date || p.due; return { _type: 'project', id: p.id, title: p.name, subLabel: p.type || 'Project', _d: parseTaskDate(due), _due: due, _color: p.color }; })
+      .filter(p => p._d);
+
+    const upcoming = [...upcomingTasks, ...upcomingProjects]
       .sort((a, b) => a._d - b._d)
-      .slice(0, 5);
+      .slice(0, 6);
+
     const weekCount = upcoming.filter(t => {
       const diff = Math.round((t._d - today) / 864e5);
       return diff >= 0 && diff <= 7;
     }).length;
+
+    // Team workload computed from live tasks + project memberships so it
+    // reflects newly created items without needing a full page reload.
+    const workload = Object.keys(members).map(k => {
+      const activeTasks = tasks.filter(t =>
+        (t.ass === k || t.assignee_initials === k) && !['done', 'approved'].includes(t.status)
+      ).length;
+      const activeProjectCount = projects.filter(p =>
+        p.status !== 'completed' && (p.members || []).includes(k)
+      ).length;
+      return { k, total: activeTasks + activeProjectCount };
+    });
 
     return (
     <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
@@ -632,36 +682,54 @@ export default function App() {
         <StatCard label="Team Members" value={Object.keys(members).length} delta="Active" up />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+        {/* ── Ongoing Projects — traffic-light progress bar + +/– buttons ── */}
         <Panel title="Ongoing Projects" action="View all →" actionClick={() => goNav('projects')}>
           {projects.length === 0
             ? <p style={{ fontSize: 12, color: '#918E98', padding: '8px 0' }}>No projects yet. Create your first project to get started.</p>
-            : projects.slice(0, 5).map(p => (
-              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #E2E0E5', cursor: 'pointer' }}>
-                <div style={{ width: 3, height: 32, borderRadius: 2, background: p.color, flexShrink: 0 }} />
+            : projects.filter(p => p.status !== 'completed').slice(0, 5).map(p => (
+              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #E2E0E5' }}>
+                <div style={{ width: 3, height: 36, borderRadius: 2, background: p.color, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 500, color: '#2A2829', marginBottom: 2 }}>{p.name}</div>
-                  <div style={{ fontSize: 11, color: '#918E98' }}>{p.tags.join(' • ')}</div>
+                  <div style={{ fontSize: 11, color: '#918E98', marginBottom: 5 }}>{p.tags.join(' • ')}</div>
+                  {/* Traffic-light bar: red < 40%, amber 40–69%, green ≥ 70% */}
+                  <ProgressBar pct={p.pct} color={p.color} traffic width={140} />
                 </div>
-                <div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5, flexShrink: 0 }}>
                   <Pill status={p.status} />
-                  <div style={{ marginTop: 5 }}><ProgressBar pct={p.pct} color={p.color} width={80} /></div>
+                  {/* +/– progress controls */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <button onClick={e => { e.stopPropagation(); adjustProgress(p.id, -5); }}
+                      style={{ width: 20, height: 20, borderRadius: 4, border: '1px solid #E2E0E5', background: '#F4F3F5', cursor: 'pointer', fontSize: 13, lineHeight: 1, color: '#5A5860', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                    <span style={{ fontSize: 11, color: pctToTrafficColor(p.pct), fontWeight: 600, minWidth: 32, textAlign: 'center' }}>{p.pct}%</span>
+                    <button onClick={e => { e.stopPropagation(); adjustProgress(p.id, 5); }}
+                      style={{ width: 20, height: 20, borderRadius: 4, border: '1px solid #E2E0E5', background: '#F4F3F5', cursor: 'pointer', fontSize: 13, lineHeight: 1, color: '#5A5860', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                  </div>
                 </div>
               </div>
             ))
           }
         </Panel>
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* ── Upcoming Deadlines — tasks AND projects ── */}
           <Panel title="Upcoming Deadlines">
             {upcoming.length === 0
-              ? <p style={{ fontSize: 12, color: '#918E98', padding: '8px 0' }}>No upcoming deadlines. Tasks with due dates will appear here.</p>
-              : upcoming.map((task, i) => {
-                  const { label, color } = getDueLabel(task._due);
+              ? <p style={{ fontSize: 12, color: '#918E98', padding: '8px 0' }}>No upcoming deadlines. Tasks and projects with due dates will appear here.</p>
+              : upcoming.map((item, i) => {
+                  const { label, color } = getDueLabel(item._due);
                   return (
-                    <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: i < upcoming.length - 1 ? '1px solid #E2E0E5' : 'none' }}>
-                      <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                    <div key={`${item._type}-${item.id}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: i < upcoming.length - 1 ? '1px solid #E2E0E5' : 'none' }}>
+                      {/* Dot coloured by urgency; project dot is a square to distinguish */}
+                      <div style={{ width: 6, height: 6, borderRadius: item._type === 'project' ? 1 : '50%', background: item._type === 'project' ? (item._color || color) : color, flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, color: '#2A2829', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</div>
-                        <div style={{ fontSize: 11, color: '#918E98' }}>{MEMBER_NAMES[task.ass] || 'Unassigned'}</div>
+                        <div style={{ fontSize: 12, color: '#2A2829', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title}</div>
+                        {/* Sub-label: assignee name for tasks, project type for projects */}
+                        <div style={{ fontSize: 10, color: '#918E98' }}>
+                          {item._type === 'project'
+                            ? <span style={{ background: '#EBEAED', borderRadius: 3, padding: '1px 5px' }}>{item.subLabel}</span>
+                            : item.subLabel}
+                        </div>
                       </div>
                       <div style={{ fontSize: 11, fontWeight: 500, color, flexShrink: 0 }}>{label}</div>
                     </div>
@@ -669,6 +737,7 @@ export default function App() {
                 })
             }
           </Panel>
+
           <Panel title="Quick Actions">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
               <Btn sm onClick={() => setTaskModal({})} style={{ width: '100%', justifyContent: 'flex-start' }}><Plus size={13} /> Create New Task</Btn>
@@ -679,17 +748,19 @@ export default function App() {
           </Panel>
         </div>
       </div>
-      <Panel title="Team Workload — Active Tasks per Member" action="Manage →" actionClick={() => goNav('team')}>
+
+      {/* ── Team Workload — live from tasks + project memberships ── */}
+      <Panel title="Team Workload — Active Work per Member" action="Manage →" actionClick={() => goNav('team')}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginTop: 4 }}>
-          {Object.entries(members).map(([k, m]) => {
+          {workload.map(({ k, total }) => {
             const mc = MEMBER_COLORS[k] || { fg: '#848688' };
             return (
               <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <div style={{ fontSize: 12, color: '#5A5860', width: 110, flexShrink: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{MEMBER_NAMES[k]}.</div>
                 <div style={{ flex: 1, background: '#F4F3F5', borderRadius: 3, height: 6, overflow: 'hidden' }}>
-                  <div style={{ height: '100%', borderRadius: 3, width: `${Math.min(m.active * 10, 100)}%`, background: mc.fg }} />
+                  <div style={{ height: '100%', borderRadius: 3, width: `${Math.min(total * 10, 100)}%`, background: mc.fg }} />
                 </div>
-                <div style={{ fontSize: 11, color: '#918E98', width: 26, textAlign: 'right' }}>{m.active}</div>
+                <div style={{ fontSize: 11, color: '#918E98', width: 26, textAlign: 'right' }}>{total}</div>
               </div>
             );
           })}
@@ -713,8 +784,18 @@ export default function App() {
               <div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: '#2A2829' }}>{p.name}</div><div style={{ fontSize: 11, color: '#918E98', marginTop: 2 }}>{p.type} · Started {p.start}</div></div>
               <Pill status={p.status} />
             </div>
-            <ProgressBar pct={p.pct} color={p.color} />
-            <div style={{ fontSize: 11, color: '#918E98', margin: '8px 0 12px' }}>{p.pct}% complete · Due {p.due}</div>
+            {/* Traffic-light progress bar + inline +/– controls */}
+            <ProgressBar pct={p.pct} color={p.color} traffic />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 12px' }}>
+              <span style={{ fontSize: 11, color: pctToTrafficColor(p.pct), fontWeight: 600 }}>{p.pct}%</span>
+              <span style={{ fontSize: 11, color: '#918E98' }}>complete · Due {p.due}</span>
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <button onClick={() => adjustProgress(p.id, -5)}
+                  style={{ width: 22, height: 22, borderRadius: 4, border: '1px solid #E2E0E5', background: '#F4F3F5', cursor: 'pointer', fontSize: 14, color: '#5A5860', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                <button onClick={() => adjustProgress(p.id, 5)}
+                  style={{ width: 22, height: 22, borderRadius: 4, border: '1px solid #E2E0E5', background: '#F4F3F5', cursor: 'pointer', fontSize: 14, color: '#5A5860', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+              </div>
+            </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{p.tags.map(t => <Tag key={t}>{t}</Tag>)}</div>
             <div style={{ height: 1, background: '#E2E0E5', margin: '14px 0' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1030,13 +1111,36 @@ export default function App() {
       return mi >= 0 ? { month: mi, day: parseInt(m[2]) } : null;
     };
 
-    // Build event map: day → [task, ...]  (only tasks due this month)
+    // Build event map: day → [event, ...]
+    // Includes both tasks (due this month) and projects (due this month).
+    // Each event carries _kind ('task'|'project') and _type (the category label).
     const eventMap = {};
-    tasks.forEach((task, i) => {
+    let _ci = 0;
+    tasks.forEach(task => {
       const parsed = parseDate(task.due_date || task.due);
       if (!parsed || parsed.month !== month) return;
       if (!eventMap[parsed.day]) eventMap[parsed.day] = [];
-      eventMap[parsed.day].push({ ...task, _ci: i % EV_COLOR.length });
+      eventMap[parsed.day].push({
+        ...task,
+        _kind:  'task',
+        _type:  task.dept === 'bg' ? 'BG Task' : 'BU Task',
+        _ci:    _ci++ % EV_COLOR.length,
+      });
+    });
+    projects.forEach(project => {
+      const due = project.due_date || project.due;
+      if (!due || due === 'Ongoing') return;
+      const parsed = parseDate(due);
+      if (!parsed || parsed.month !== month) return;
+      if (!eventMap[parsed.day]) eventMap[parsed.day] = [];
+      eventMap[parsed.day].push({
+        id:     `proj-${project.id}`,
+        title:  project.name,
+        _kind:  'project',
+        _type:  project.type || 'Project',
+        _color: project.color,
+        _ci:    _ci++ % EV_COLOR.length,
+      });
     });
 
     // Grid calculations
@@ -1069,17 +1173,29 @@ export default function App() {
           {monthArr.map(d => (
             <div key={d} style={{ background: isToday(d) ? COLORS.burgDim : '#fff', minHeight: 90, padding: 7 }}>
               <div style={{ fontSize: 12, color: isToday(d) ? COLORS.burg : '#5A5860', marginBottom: 4, fontWeight: isToday(d) ? 700 : 400 }}>{d}</div>
-              {(eventMap[d] || []).map(ev => (
-                <div key={ev.id} style={{ fontSize: 10, padding: '2px 5px', borderRadius: 3, marginBottom: 2, background: EV_BG[ev._ci], color: EV_COLOR[ev._ci], overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {ev.title}
-                </div>
-              ))}
+              {(eventMap[d] || []).map(ev => {
+                // Projects get a left-border chip using their brand colour;
+                // tasks get the standard coloured background chip.
+                const isProj = ev._kind === 'project';
+                return (
+                  <div key={ev.id} style={{
+                    fontSize: 10, padding: '2px 5px', borderRadius: 3, marginBottom: 2,
+                    background:  isProj ? `${ev._color}18` : EV_BG[ev._ci],
+                    color:       isProj ? ev._color        : EV_COLOR[ev._ci],
+                    borderLeft:  isProj ? `2px solid ${ev._color}` : 'none',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {/* Type badge prefix so users know task vs. project and the category */}
+                    <span style={{ opacity: 0.75, marginRight: 3 }}>[{ev._type}]</span>{ev.title}
+                  </div>
+                );
+              })}
             </div>
           ))}
           {nextPad.map((d, i) => <div key={`n${i}`} style={{ background: '#F9F8FA', minHeight: 90, padding: 7 }}><div style={{ fontSize: 12, color: '#C4C2C8', marginBottom: 4 }}>{d}</div></div>)}
         </div>
         {Object.keys(eventMap).length === 0 && (
-          <p style={{ textAlign: 'center', color: '#918E98', fontSize: 13, marginTop: 24 }}>No tasks due this month. Tasks with a due date will appear here.</p>
+          <p style={{ textAlign: 'center', color: '#918E98', fontSize: 13, marginTop: 24 }}>No tasks or projects due this month.</p>
         )}
       </div>
     );

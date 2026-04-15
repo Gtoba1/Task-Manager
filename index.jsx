@@ -413,6 +413,7 @@ export default function App() {
       if (data.email && data.email.trim() !== user.email) {
         payload.email = data.email.trim();
       }
+      if (data.password) payload.password = data.password;
       await API.updateUser(user.id, payload);
       setMembers(m => ({ ...m, [key]: { ...m[key], ...data } }));
       setRawUsers(us => us.map(u => u.initials === key ? { ...u, ...payload } : u));
@@ -1645,11 +1646,11 @@ export default function App() {
         fd.append('avatar', file);
         const userId = rawUsers.find(u => u.initials === memberModal.key)?.id;
         const res    = await API.uploadAvatar(userId, fd);
-        // Update the global map + rawUsers so the photo appears immediately everywhere
+        // Update the global AVATAR_URLS map — Avatar components re-read this on their
+        // next render (triggered by setUploading below), so the photo shows immediately.
+        // We deliberately do NOT call setRawUsers here because that would re-render
+        // the parent App and unmount this modal, losing any unsaved form changes.
         AVATAR_URLS[memberModal.key] = res.data.avatar_url;
-        setRawUsers(us => us.map(u =>
-          u.initials === memberModal.key ? { ...u, avatar_url: res.data.avatar_url } : u
-        ));
       } catch (err) {
         alert(err.response?.data?.error || 'Photo upload failed. Max size is 3 MB.');
       } finally {
@@ -1658,7 +1659,7 @@ export default function App() {
     };
 
     const handleSave = () => {
-      if (!form.name || !form.role) return;
+      if (!form.name) return;
       if (showPassSection) {
         if (newPass && newPass.length < 8) return setPassError('Password must be at least 8 characters.');
         if (newPass !== confirmPass)        return setPassError('Passwords do not match.');

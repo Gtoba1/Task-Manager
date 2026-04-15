@@ -8,14 +8,24 @@ why decisions were made, and how to replicate or extend it. Read this before tou
 
 ## What this app is
 
-An internal task and project management dashboard built specifically for the **TD Africa Data Team**.
-It replaces spreadsheets and WhatsApp threads with a single place to manage projects, assign tasks,
-track progress, collaborate via comments, and chat as a team — all in real time.
+An internal task and project management dashboard for the **TD Africa Data Team**.
+Replaces spreadsheets and WhatsApp threads with a single place to manage projects,
+assign tasks, track progress, collaborate via comments, and chat as a team in real time.
 
-**Live users:** datateam@tdafrica.com (admin), Samuel Ogundele (SO), Tobi Gbadamosi (TG),
-Samuel Adeyemi (SA), Jumoke Adeyemi (JA), Dotun Olawale (DO).
+**Live URL:** https://task-manager-jmdz.onrender.com  
+**GitHub repo:** https://github.com/Gtoba1/Task-Manager  
 
-**Brand colours:** Burgundy `#8B1A2B`, Charcoal `#363435`, Gray `#848688`
+**Team accounts (all @tdafrica.com emails):**
+| Initials | Name | Role | Email |
+|---|---|---|---|
+| DT | Data Team | admin | datateam@tdafrica.com |
+| SO | Samuel Oluwadamilola Oyeniran | member | samuel@tdafrica.com |
+| TG | Oloruntoba Toluwalase Gabriel | member | toluwalase@tdafrica.com |
+| SA | Sharon Oluwapelumi Adedeji | member | sharon@tdafrica.com |
+| JA | Olusola John Abodunrin | member | john@tdafrica.com |
+| DO | Deborah Ilashe Ogunmola | member | deborah@tdafrica.com |
+
+**Brand colours:** Burgundy `#8B1A2B` (primary), Charcoal `#363435`, Gray `#848688`
 
 ---
 
@@ -23,18 +33,18 @@ Samuel Adeyemi (SA), Jumoke Adeyemi (JA), Dotun Olawale (DO).
 
 | Layer | Technology | Notes |
 |---|---|---|
-| Frontend | React 18 + Vite | Single JSX file (`index.jsx`) + small component files in `src/` |
+| Frontend | React 18 + Vite | Single JSX file (`index.jsx`) + small files in `src/` |
 | Styling | Inline styles only | No CSS files, no Tailwind — all styles are JS objects |
 | Icons | lucide-react | |
-| Charts | recharts | Used in the Analytics view |
+| Charts | recharts | Used in the Analytics/Reports view |
 | HTTP client | axios | Centralised in `src/api.js` |
-| Real-time | socket.io-client | Chat + desktop notifications |
-| Backend | Express (Node.js) | CommonJS (`require`/`module.exports`) — not ES modules |
-| Real-time server | socket.io | Runs on the same port as Express via `http.createServer` |
+| Real-time | socket.io-client | Chat + presence + desktop notifications |
+| Backend | Express (Node.js) | CommonJS (`require`/`module.exports`) — NOT ES modules |
+| Real-time server | socket.io | Runs on same port as Express via `http.createServer` |
 | Auth | JWT (jsonwebtoken) | 7-day tokens stored in localStorage |
-| Password hashing | bcrypt (cost 10) | |
-| Database | PostgreSQL | Accessed via `pg` connection pool |
-| File uploads | multer | Avatar photos saved to `server/public/uploads/avatars/` |
+| Password hashing | bcrypt (cost 10) | Minimum 8 characters enforced on server + all forms |
+| Database | PostgreSQL (Neon) | Cloud Postgres — `pg` pool with SSL |
+| File uploads | multer (memoryStorage) | Avatar photos stored as base64 data URLs in DB — no filesystem |
 | Security | helmet + express-rate-limit | Headers hardened; login limited to 10/15 min per IP |
 
 ---
@@ -45,11 +55,13 @@ Samuel Adeyemi (SA), Jumoke Adeyemi (JA), Dotun Olawale (DO).
 Data Team Task Manager/
 ├── CLAUDE.md                   ← This file
 ├── .gitignore                  ← Excludes .env, node_modules, dist, uploads
+├── .env.example                ← Safe template showing all required vars
+├── render.yaml                 ← Render deployment config
 ├── package.json                ← Frontend deps (React, Vite, axios, socket.io-client, recharts)
-├── vite.config.js              ← Dev proxy: /api + /uploads → localhost:3001; input: app.html
-├── app.html                    ← HTML entry point (not index.html)
+├── vite.config.js              ← Dev proxy: /api → localhost:3001; input: app.html
+├── app.html                    ← HTML entry point (NOT index.html — Vite configured for this)
 ├── main.jsx                    ← React root: Auth check → Login / App / ResetPasswordPage
-├── index.jsx                   ← Main dashboard (~1300+ lines): all views, state, components
+├── index.jsx                   ← Main dashboard (~1900+ lines): all views, state, components
 │
 ├── src/
 │   ├── api.js                  ← All axios calls — single source of truth for backend comms
@@ -80,195 +92,80 @@ Data Team Task Manager/
     │   └── notifications.js    ← GET /, PATCH /read-all
     │
     ├── middleware/
-    │   ├── auth.js             ← requireAuth middleware — verifies JWT Bearer token
-    │   └── upload.js           ← multer config: avatars only, 3 MB max, jpeg/png/gif/webp
+    │   ├── auth.js             ← requireAuth + requireAdmin middleware (JWT Bearer token)
+    │   └── upload.js           ← multer config: memoryStorage, images only, 3 MB max (★ mark)
     │
     └── db/
-        ├── pool.js             ← Shared pg.Pool instance (all controllers import this)
-        ├── setup-admin.js      ← One-time script: creates admin account + password_reset_tokens table
-        └── reset-passwords.js  ← Utility script for manual password resets if needed
+        ├── pool.js             ← Shared pg.Pool — uses DATABASE_URL (Neon) or individual DB_* vars
+        ├── neon-setup.sql      ← Full schema + seed data — paste into Neon SQL Editor to set up
+        ├── setup-admin.js      ← One-time local script (not used in cloud deployment)
+        └── reset-passwords.js  ← Utility for manual password resets
 ```
 
 ---
 
-## Database schema
+## Database schema (Neon PostgreSQL)
 
-All tables are in the default `taskmanager` PostgreSQL database.
+The complete schema is in `server/db/neon-setup.sql`. Summary:
 
 ```sql
--- Core users table
-users (
-  id            SERIAL PRIMARY KEY,
-  initials      VARCHAR(3)  UNIQUE NOT NULL,   -- e.g. 'SO', 'DT'
-  name          VARCHAR     NOT NULL,
-  email         VARCHAR     UNIQUE NOT NULL,
-  password_hash VARCHAR     NOT NULL,
-  role          VARCHAR     DEFAULT 'member',  -- 'admin' | 'member'
-  job_title     VARCHAR,
-  status        VARCHAR     DEFAULT 'active',  -- 'active' | 'away' | 'busy'
-  avatar_url    VARCHAR,                        -- e.g. /uploads/avatars/3-1710000000.jpg
-  created_at    TIMESTAMPTZ DEFAULT NOW()
-)
-
--- Projects
-projects (
-  id          SERIAL PRIMARY KEY,
-  name        VARCHAR   NOT NULL,
-  description TEXT,
-  status      VARCHAR   DEFAULT 'active',
-  color       VARCHAR,                          -- hex colour for the project badge
-  created_at  TIMESTAMPTZ DEFAULT NOW()
-)
-
--- Tasks
-tasks (
-  id           SERIAL PRIMARY KEY,
-  title        VARCHAR    NOT NULL,
-  description  TEXT,
-  status       VARCHAR    DEFAULT 'Backlog',   -- 'Backlog' | 'In Progress' | 'Review' | 'Done'
-  priority     VARCHAR    DEFAULT 'Medium',    -- 'Low' | 'Medium' | 'High'
-  project_id   INTEGER    REFERENCES projects(id) ON DELETE SET NULL,
-  assignee_id  INTEGER    REFERENCES users(id) ON DELETE SET NULL,
-  due_date     DATE,
-  created_at   TIMESTAMPTZ DEFAULT NOW()
-)
-
--- Task comments (shown in the task detail panel)
-task_comments (
-  id         SERIAL PRIMARY KEY,
-  task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  content    TEXT    NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-)
-
--- Task activity log (auto-generated on status changes)
-task_activity (
-  id         SERIAL PRIMARY KEY,
-  task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  action     VARCHAR NOT NULL,                 -- e.g. 'status_changed'
-  detail     TEXT,                             -- e.g. 'Backlog → In Progress'
-  created_at TIMESTAMPTZ DEFAULT NOW()
-)
-
--- Team chat messages
-chat_messages (
-  id         SERIAL PRIMARY KEY,
-  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  content    TEXT    NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-)
-
--- Notifications (in-app bell icon)
-notifications (
-  id         SERIAL PRIMARY KEY,
-  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  title      VARCHAR NOT NULL,
-  body       TEXT,
-  read       BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-)
-
--- Password reset tokens (one-time use, 1-hour expiry)
-password_reset_tokens (
-  id         SERIAL PRIMARY KEY,
-  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  token      VARCHAR(64) NOT NULL UNIQUE,
-  expires_at TIMESTAMPTZ NOT NULL,
-  used       BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-)
+users              -- id, initials, name, email, password_hash, role, job_title, status, avatar_url
+projects           -- id, name, type, status, progress, color, start_date, due_date, created_by
+project_members    -- (project_id, user_id) join table
+project_tags       -- id, project_id, tag
+tasks              -- id, title, description, status, priority, dept, due_date, assignee_id, project_id, created_by
+task_collaborators -- (task_id, user_id) join table
+task_comments      -- id, task_id, user_id, content, created_at
+task_activity      -- id, task_id, user_id, action, detail, created_at  (auto-logged on status change)
+chat_messages      -- id, user_id, content, created_at
+chat_last_read     -- user_id (PK), message_id, updated_at  ← AUTO-CREATED on server start (read receipts)
+notifications      -- id, user_id, message, is_read, created_at
+password_reset_tokens -- id, user_id, token, expires_at, used
 ```
 
----
+**Important date format:** `due_date` in tasks and projects is stored as `VARCHAR` in free-form
+format like `"Apr 5"` or `"May 30, 2025"`. The frontend parses it with a regex:
+`str.match(/([A-Za-z]{3})\s+(\d{1,2})(?:,?\s*(\d{4}))?/)`. Do NOT change to `DATE` type
+without updating all the parsing code throughout `index.jsx`.
 
-## Features
-
-### Dashboard / Home
-- Summary cards: tasks by status, overdue count, team members online
-- Recent tasks list
-
-### Task Board (Kanban)
-- Four columns: Backlog → In Progress → Review → Done
-- Drag-less — status changed via dropdown in the task detail panel
-- Clicking any task opens a **detail panel** on the right with:
-  - Task metadata (project, assignee, due date, priority)
-  - **Comments** — any team member can post; own comments (and admin) can delete
-  - **Activity log** — auto-generated entry every time status changes
-  - Comments and activity are merged into a single timeline sorted by date
-
-### Projects
-- Create, edit, delete projects
-- Each project has a name, description, colour badge, and status
-
-### Team / Members
-- View all team members, their role, job title, status (active/away/busy)
-- Edit name, email, job title, status via modal
-- Upload profile photo (JPEG/PNG/GIF/WebP, max 3 MB) — stored as `/uploads/avatars/filename`
-- Photos appear in avatars everywhere in the app via module-level `AVATAR_URLS` map
-
-### Analytics
-- Charts using recharts: tasks by status, tasks by project, team workload
-- Built with the recharts library
-
-### Team Chat
-- Team-wide room (no direct messages)
-- Real-time via Socket.io — messages appear instantly for all connected users
-- Own messages right-aligned (burgundy bubble), others left-aligned (gray)
-- Date separators when the day changes
-- Loads last 50 messages on open (chat history)
-- Unread badge on the sidebar chat icon when a message arrives and user isn't on chat view
-
-### Desktop Notifications
-- Browser Web Notifications API
-- Permission requested once on first login; browser remembers it
-- Fires when a `notify:receive` socket event arrives (e.g. task assigned, new chat message while not on chat view)
-- Auto-closes after 5 seconds; clicking it focuses the browser tab
-
-### Admin Panel (admin role only)
-- Stats overview cards
-- User management table: promote/demote role, reset password, delete user
-- Create new team members with name, email, password, job title, role
-- **Reset Password modal** — admin can set a new password for any user without knowing old one
-
-### Forgot Password
-- User enters email on login page → server logs a one-time reset link to the Terminal
-- Admin copies the link and sends it to the user (via Teams, email, etc.)
-- Link contains `?reset_token=xxx` — clicking it shows `ResetPasswordPage`
-- Token is one-time use and expires after 1 hour
-- SMTP config is available in `.env` (commented out) if you want to send emails automatically
-
-### Authentication
-- JWT tokens, 7-day expiry, stored in localStorage
-- Auto-logout when token expires
-- Protected routes: all pages require login; Admin Panel requires `role === 'admin'`
+**chat_last_read** is not in `neon-setup.sql` — it is auto-created by `server/index.js` on startup:
+```js
+pool.query(`CREATE TABLE IF NOT EXISTS chat_last_read (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  message_id INTEGER,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+)`);
+```
 
 ---
 
 ## Environment variables (`server/.env`)
 
 ```
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=taskmanager
-DB_USER=postgres
-DB_PASSWORD=your_db_password
+# PostgreSQL — Neon cloud (use DATABASE_URL) OR local (use individual vars)
+DATABASE_URL=postgres://user:pass@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require
+
+# Only needed for local development (when DATABASE_URL is not set)
+# DB_HOST=localhost
+# DB_PORT=5432
+# DB_NAME=taskmanager
+# DB_USER=postgres
+# DB_PASSWORD=your_password
 
 PORT=3001
 
-# IMPORTANT: change this to your real domain in production
-APP_URL=http://localhost:5173
+# Your live domain — CORS and Socket.io are locked to this origin
+APP_URL=https://task-manager-jmdz.onrender.com
 
-# Generate with: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-JWT_SECRET=long_random_string_here
+# Generate: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+JWT_SECRET=your_96_char_hex_secret_here
 JWT_EXPIRES_IN=7d
 
-# Optional — fill in to send real password reset emails
+# Optional SMTP for automated password reset emails
 # SMTP_HOST=smtp.office365.com
 # SMTP_PORT=587
 # SMTP_USER=datateam@tdafrica.com
-# SMTP_PASS=your_password
+# SMTP_PASS=your_email_password
 # SMTP_FROM=TD Africa Data Team <datateam@tdafrica.com>
 ```
 
@@ -276,145 +173,263 @@ JWT_EXPIRES_IN=7d
 
 ## Running locally (development)
 
-**Prerequisites:** Node.js 18+, PostgreSQL running, `taskmanager` database created with the schema above.
+**Prerequisites:** Node.js 18+, either Neon connection string or local PostgreSQL.
 
 ```bash
 # Terminal 1 — backend
 cd "Data Team Task Manager/server"
+cp .env.example .env          # fill in your DB credentials + JWT_SECRET
 npm install
-node db/setup-admin.js     # run ONCE on first setup
-npm run dev                # nodemon starts on port 3001
+npm run dev                   # nodemon starts on port 3001
 
 # Terminal 2 — frontend
 cd "Data Team Task Manager"
 npm install
-npm run dev                # Vite starts on port 5173
+npm run dev                   # Vite starts on port 5173
 ```
 
 Open `http://localhost:5173/app.html`
 
-Default admin login: `datateam@tdafrica.com` / `password123` — **change this immediately via Admin Panel**
+**First-time DB setup:** Open Neon (or your local psql) and run all of `server/db/neon-setup.sql`.
+This creates all tables and seeds the team accounts with password `"password"`.
+All team members should change their passwords after first login via Profile → Change my password.
 
 ---
 
-## Deploying to production (Railway recommended)
+## Deployment (Render + Neon — current setup)
 
-Vercel does NOT work for this app — Socket.io requires persistent WebSocket connections
-which Vercel's serverless model doesn't support.
+**Render** hosts the Node.js server (free tier — sleeps after 15 min idle, wakes on first request).  
+**Neon** hosts the PostgreSQL database (free tier — no expiry, always-on).
 
-**Railway** (railway.app) hosts both the Node.js server and PostgreSQL in one place.
-
-```bash
-# 1. Build the frontend
-cd "Data Team Task Manager"
-npm run build              # creates dist/ folder
-
-# 2. Commit dist/ to git (or configure Railway build command)
-# 3. In Railway: set environment variables from .env
-#    - Set NODE_ENV=production
-#    - Set APP_URL=https://yourdomain.railway.app
-# 4. Railway start command: node server/index.js
+### render.yaml (already in repo)
+```yaml
+services:
+  - type: web
+    name: td-africa-data-team
+    runtime: node
+    buildCommand: npm install --include=dev && npm run build && npm install --prefix server
+    startCommand: node server/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 18.20.0
 ```
 
-In production mode (`NODE_ENV=production`), Express serves the built React app from `dist/`
-automatically — only one process, one port.
+`--include=dev` in the build command is critical — Vite is a devDependency and must be installed
+before `npm run build` runs. Without it the build fails with "vite: not found".
 
-**CORS and Socket.io** both read `APP_URL` from `.env` — update it to your live domain or
-browsers will be blocked.
+### Render env vars to set manually in dashboard
+- `DATABASE_URL` — from Neon connection string
+- `JWT_SECRET` — 96-char hex string
+- `APP_URL` — `https://task-manager-jmdz.onrender.com`
+- `NODE_ENV` — `production` (already in render.yaml)
 
----
-
-## Key architectural decisions
-
-**Why one big `index.jsx`?**
-All views, state, and components live in a single file for simplicity. The codebase is small
-enough that splitting into many files would add navigation overhead without real benefit.
-Module-level mutable maps (`MEMBER_NAMES`, `MEMBER_ROLES`, `AVATAR_URLS`) let every Avatar
-component instance update automatically when data is loaded or changed.
-
-**Why inline styles (no CSS files)?**
-Keeps everything co-located. No class name collisions, no build-time CSS processing, easy
-to read what a component looks like without jumping between files.
-
-**Why CommonJS on the server?**
-The frontend uses ES modules (Vite), but the server uses CommonJS `require`/`module.exports`
-consistently throughout. Don't mix them — pick one per side and stick to it.
-
-**Why Socket.io on the same port as Express?**
-`http.createServer(app)` wraps Express in a plain Node HTTP server, then Socket.io attaches
-to that. Both REST API and WebSocket live on port 3001 — no extra process needed.
-
-**Password reset without email**
-The app logs the reset link to the server Terminal. The admin copies it and sends it to the
-user manually (Teams, email). SMTP config is available in `.env` to automate this when ready.
-
-**Avatar storage**
-Files saved to `server/public/uploads/avatars/`, served at `/uploads/avatars/filename`.
-The Vite dev proxy forwards `/uploads` to the Express server. In production, Express serves
-them directly. These files are gitignored — back them up separately in production.
+### Production mode behaviour
+When `NODE_ENV=production`, Express serves the built React app from `dist/` and sends `app.html`
+for all non-API routes. Vite dev server is NOT used in production.
 
 ---
 
-## Replicating for another department (e.g. Marketing, Sales, Procurement)
+## Features
 
-This app is generic enough to reuse with minimal changes. Here's what to change:
+### Dashboard
+- Summary stat cards: active projects, open tasks, completed tasks, team members
+- Greeting: "Hi, [first name] 👋"
+- Upcoming deadlines panel: real tasks sorted by due date, colour-coded (Overdue/Today/Tomorrow/In X days)
+- Ongoing projects panel with progress bars
+- All data is live from the API — nothing hardcoded
 
-### Step 1 — Fork the repo
-Create a new GitHub repo: `marketing-team-dashboard`, copy this codebase in.
+### Task Board (Kanban)
+- Six columns: Backlog → In Progress → Review → Approved → Done
+- Status changed via buttons in the task detail panel (right sidebar on click)
+- Drag-and-drop between columns
+- Task detail panel includes: metadata, comments, activity log (merged timeline)
+- Dept tags: BU (Business Unit) or BG (Business Group)
+- Priority dots: red (high), amber (medium), green (low)
 
-### Step 2 — Branding (5 minutes)
-In `src/Login.jsx` and `index.jsx`:
-- `COLORS.burg` — change the primary colour (e.g. `#1A4D8B` for blue)
-- `LOGO_PATH` — update to the new team's logo
-- The tagline in the Login left panel: "Your team's work, in one place."
+### Projects
+- Create, edit, delete projects
+- Progress bar per project (0–100%)
+- Members and tags per project
+- Filter by status
 
-### Step 3 — Team avatars on login screen
-In `src/Login.jsx`:
+### Team / Members
+- Grid of member cards showing name, role, real online/offline status
+- **Online/Offline is real-time** via Socket.io presence tracking — NOT the DB status field
+- Edit member profile via modal (pencil button or clicking own avatar in sidebar)
+- Upload profile photo — stored as **base64 data URL in the database** (not filesystem)
+  - Max 3 MB (change `limits.fileSize` in `server/middleware/upload.js` line marked ★)
+  - Accepted: JPEG, PNG, GIF, WebP
+- Admin can promote/demote members and set their password
+- Members can change their own password from Profile → "Change my password"
+
+### Calendar
+- Monthly view with task due dates plotted as coloured chips
+- Navigate months with chevron arrows
+- Today highlighted
+
+### Timeline
+- Gantt-style view of all projects across a 6-month window (1 month back, 5 months forward)
+- Bar width and position calculated from start_date/due_date
+
+### Reports / Analytics
+- Charts: tasks by status (bar), tasks by project (bar), team workload (pie), pipeline summary
+
+### Notifications (in-app bell)
+- Live from API — no hardcoded data
+- "Mark all read" clears the unread count
+- Empty state when there are none
+
+### Team Chat
+- Team-wide channel (no DMs)
+- Real-time via Socket.io
+- Own messages right-aligned (burgundy), others left-aligned (gray)
+- Date separators when day changes
+- Loads last 50 messages on open
+- Unread badge on sidebar when messages arrive while not on chat view
+- **Read receipts:** "Seen" label + reader initials avatars appear under own messages once read
+  - Powered by `chat_last_read` table (auto-created on server start)
+  - Marks all messages as read automatically while chat view is open
+
+### Desktop Notifications
+- Browser Web Notifications API (permission requested once on first login)
+- Fires on new chat messages when not in chat view, and on socket `notify:receive` events
+
+### Admin Panel (admin role only)
+- User management: create, promote/demote, delete members
+- Set passwords for any member
+- Overview stats
+
+### Forgot Password
+- Enter email → server logs a one-time reset link to the Terminal/Render logs
+- Admin copies the link and sends to the user manually
+- `?reset_token=xxx` in URL shows `ResetPasswordPage`
+- Tokens: one-time, 1-hour expiry
+
+---
+
+## Socket.io events
+
+| Event | Direction | Purpose |
+|---|---|---|
+| `chat:send` | client → server | Send a new chat message |
+| `chat:message` | server → all clients | Broadcast a new message |
+| `chat:read` | client → server | Signal last-seen message ID |
+| `chat:read_status` | server → all clients | Broadcast updated read pointers |
+| `presence:update` | server → all clients | Array of currently online user IDs |
+| `notify:broadcast` | client → server | Ask server to notify other users |
+| `notify:receive` | server → client | Trigger a desktop notification |
+
+---
+
+## Key architectural decisions & gotchas
+
+### Single `index.jsx` file
+All views, state, and components live in one file. Module-level mutable maps
+(`MEMBER_NAMES`, `MEMBER_ROLES`, `AVATAR_URLS`) let every Avatar component instance
+update without React state — mutate then trigger a re-render via local state.
+
+### MemberModalForm defined inside App — KNOWN LIMITATION
+`MemberModalForm` is declared as a `const` inside `App()`. On every App re-render, React
+sees a NEW function reference and unmounts/remounts the modal, resetting all local form state.
+**Workaround applied:** `handlePhotoChange` does NOT call `setRawUsers` after upload (which
+would trigger an App re-render). It only mutates `AVATAR_URLS[key]` directly, then calls
+`setUploading(false)` which only re-renders MemberModalForm, preserving form fields.
+If this causes other issues in future, the proper fix is to move `MemberModalForm` outside `App`.
+
+### Avatar storage — base64 in DB
+Profile photos are stored as base64 data URLs (`data:image/jpeg;base64,...`) directly in
+the `users.avatar_url` column. This works on Render's ephemeral filesystem and requires no
+external storage service. At 3 MB max, a team of 6 uses at most ~24 MB in Neon — well within
+the free 512 MB limit. To change the limit, edit the ★-marked line in `server/middleware/upload.js`.
+
+### Presence tracking
+`server/index.js` maintains `onlineUsers: Map<userId, Set<socketId>>`. A user is only marked
+offline when ALL their browser tabs/windows disconnect. On each connect/disconnect, the server
+emits `presence:update` with an array of currently-online user IDs. The frontend stores this
+in `onlineUserIds: Set<number>` and uses it in TeamView to show real Online/Offline status.
+
+### db/pool.js — dual config
 ```js
-const TEAM = ['AB', 'CD', 'EF'];   // initials of the new team
-const AVATAR_COLORS = {
-  AB: { bg: '#E8EFF9', fg: '#3A6FD8' },
-  // ...
-};
+const pool = new Pool(
+  process.env.DATABASE_URL
+    ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
+    : { host, port, database, user, password }   // local dev
+);
 ```
+Neon requires SSL. Local dev skips SSL.
 
-### Step 4 — Database
-Create a new PostgreSQL database (e.g. `marketing_taskmanager`) and run the same schema.
-Update `server/.env` with the new DB name.
-
-### Step 5 — Admin setup
-Update `server/db/setup-admin.js`:
-- Change `datateam@tdafrica.com` → `marketing@tdafrica.com`
-- Change `'Data Team'` → `'Marketing Team'`
-- Remove the Samuel demotion block (or update initials to match)
-Run `node db/setup-admin.js` once.
-
-### Step 6 — Deploy
-Same Railway process as above, pointing to the new repo.
-
-### What you do NOT need to change
-- All the logic (tasks, projects, comments, chat, notifications, auth) works for any team
-- The Admin Panel lets you create team members via UI — no code needed
-- The database schema is team-agnostic
+### CommonJS on the server
+The server uses `require`/`module.exports` throughout. Do NOT add `"type": "module"` to
+`server/package.json` or use `import`/`export` in server files.
 
 ---
 
 ## Security measures in place
 
-- **JWT secret**: 96-character hex string, never committed to git
-- **Helmet**: HTTP security headers on every response (XSS protection, no sniffing, etc.)
-- **Rate limiting**: Login endpoint limited to 10 attempts per 15 minutes per IP
-- **CORS**: Locked to `APP_URL` env variable — blocks all other origins
-- **Password minimum**: 8 characters, enforced on server and all client forms
-- **SQL injection**: All queries use parameterised values (`$1`, `$2`, ...) via `pg` pool
-- **Avatar uploads**: Only jpeg/png/gif/webp accepted, 3 MB limit, files served from `/uploads/`
-- **Password reset tokens**: One-time use, 1-hour expiry, old tokens deleted on new request
-- **`.gitignore`**: `.env`, `node_modules/`, `dist/`, `uploads/` all excluded
+- **JWT secret**: 96-char hex string in `.env`, never committed
+- **Helmet**: HTTP security headers on every response
+- **Rate limiting**: Login endpoint: 10 attempts / 15 min / IP
+- **CORS**: Locked to `APP_URL` env var
+- **Socket.io origin**: Also locked to `APP_URL`
+- **Password minimum**: 8 characters, enforced server-side and on all client forms
+- **SQL injection**: All queries use parameterised values (`$1`, `$2`, …)
+- **Avatar uploads**: Only images, 3 MB max, stored as base64 (no path traversal risk)
+- **Password reset tokens**: One-time, 1-hour expiry, old tokens deleted on new request
+- **`.gitignore`**: `.env`, `node_modules/`, `dist/`, `server/public/uploads/` excluded
 
 ---
 
-## Repo and project history
+## Replicating for another department (Marketing, Sales, Procurement, etc.)
 
-Built from scratch across two Claude Code sessions (April 2025).
-This is the TD Africa internal tool — not open source.
-Replicate for other departments by following the "Replicating" section above.
+### Step 1 — Fork the repo
+Create a new GitHub repo, copy this codebase in.
+
+### Step 2 — Branding (5 minutes)
+In `index.jsx` at the top of the file, in the "EASY CUSTOMISATION" section:
+```js
+const BRAND = {
+  company:  'TD Africa',
+  subtitle: 'Marketing Team',   // ← change this
+  logo:     '/img/logo-white.png',
+};
+const COLORS = {
+  burg: '#1A4D8B',   // ← change primary colour to e.g. blue for marketing
+  ...
+};
+```
+In `src/Login.jsx` update the team name in the left panel.
+
+### Step 3 — New Neon database
+Create a new Neon project. Open the SQL Editor and paste `server/db/neon-setup.sql`.
+Edit the seed `INSERT INTO users` block with the new team's names/emails/initials.
+
+### Step 4 — New Render service
+Create a new Render Web Service pointing to the new repo.
+Set env vars: `DATABASE_URL`, `JWT_SECRET`, `APP_URL`, `NODE_ENV=production`.
+
+### Step 5 — Update MEMBER_COLORS in index.jsx
+```js
+const MEMBER_COLORS = {
+  AB: { bg: '#E8EFF9', fg: '#3A6FD8' },  // one entry per team member initials
+  // ...
+};
+```
+
+### What you do NOT need to change
+All business logic (tasks, projects, comments, chat, notifications, auth, admin panel)
+is fully generic. The Admin Panel UI lets you add/remove members without touching code.
+
+---
+
+## Build history (sessions)
+
+- **Session 1 (Apr 2025):** Initial build — full app from scratch; all views, API, auth, DB schema
+- **Session 2 (Apr 2025):** Security hardening (helmet, rate-limit, CORS from env, .gitignore,
+  8-char passwords, production build config); deployment to Render + Neon; cleaned all hardcoded
+  demo data (Calendar, Timeline, Dashboard, Notifications now live from API); member password change
+  from profile modal
+- **Session 3 (Apr 2025):** Real online/offline presence tracking; sidebar Profile button; greeting
+  "Good morning" → "Hi"; chat read receipts (Seen + reader avatars); avatar upload fix (base64 in DB);
+  fixed password change silently dropped in saveMember; fixed Save Changes resetting after photo upload

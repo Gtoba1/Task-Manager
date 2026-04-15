@@ -2,26 +2,16 @@
 // Multer configuration for avatar photo uploads.
 //
 // NON-DEVELOPER GUIDE:
-//   • Uploaded photos are saved to: server/public/uploads/avatars/
-//   • Max file size is 3 MB — large photos are rejected with a clear error
+//   • Photos are held in memory (not written to disk) so this works on
+//     cloud hosts like Render where the filesystem is ephemeral.
+//   • The photo is stored as a base64 data URL directly in the database.
+//   • Max file size: 3 MB — change the line marked ★ below to adjust.
 //   • Accepted types: JPG, PNG, GIF, WebP
-//   • Old avatar files are NOT automatically deleted — clean up manually if needed
 
 const multer = require('multer');
-const path   = require('path');
 
-// ── Where to save files and how to name them ─────────────────
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, '../public/uploads/avatars'));
-  },
-  filename: (req, file, cb) => {
-    // Format: userId-timestamp.ext  (e.g. 3-1712345678.jpg)
-    // Using the user ID + timestamp prevents name collisions and cache issues
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${req.params.id}-${Date.now()}${ext}`);
-  },
-});
+// ── Keep file in memory — no disk writes needed ───────────────
+const storage = multer.memoryStorage();
 
 // ── Only accept image files ───────────────────────────────────
 const fileFilter = (req, file, cb) => {
@@ -36,7 +26,7 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 3 * 1024 * 1024 }, // 3 MB maximum
+  limits: { fileSize: 3 * 1024 * 1024 }, // ★ 3 MB maximum — change to e.g. 5 * 1024 * 1024 for 5 MB
 });
 
 module.exports = upload;

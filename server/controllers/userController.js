@@ -198,8 +198,9 @@ async function deleteUser(req, res) {
 }
 
 // ── PATCH /api/users/:id/avatar ───────────────────────────────
-// Handles profile photo upload. The file is saved by multer before
-// this function runs — we just update the DB with the new URL.
+// Handles profile photo upload. Multer holds the file in memory;
+// we convert it to a base64 data URL and store it in the database.
+// This avoids any dependency on the filesystem (works on Render, etc.)
 async function uploadAvatar(req, res) {
   const { id } = req.params;
 
@@ -212,15 +213,16 @@ async function uploadAvatar(req, res) {
     return res.status(400).json({ error: 'No image file was received.' });
   }
 
-  // Build the public URL — served at /uploads/avatars/filename
-  const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+  // Convert the in-memory buffer to a base64 data URL
+  // e.g. "data:image/jpeg;base64,/9j/4AAQ..."
+  const avatarUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
 
   try {
     await pool.query(
       'UPDATE users SET avatar_url = $1 WHERE id = $2',
       [avatarUrl, id]
     );
-    console.log(`🖼️   Avatar updated for user ${id}: ${avatarUrl}`);
+    console.log(`🖼️   Avatar updated for user ${id} (${req.file.size} bytes)`);
     res.json({ avatar_url: avatarUrl });
   } catch (err) {
     console.error('uploadAvatar error:', err.message);

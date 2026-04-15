@@ -928,58 +928,145 @@ export default function App() {
 
   /* ── CALENDAR VIEW ── */
   const CalendarView = () => {
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const events = { 1: [{ t: 'Data Migration Kickoff', c: COLORS.teal, bg: COLORS.tealD }], 3: [{ t: 'Power BI Sprint Start', c: COLORS.blue, bg: COLORS.blueD }], 5: [{ t: 'Data Quality Review', c: COLORS.purple, bg: COLORS.purpleD }], 10: [{ t: 'ETL Pipeline Review', c: COLORS.amber, bg: COLORS.amberD }], 12: [{ t: 'Stakeholder Demo', c: COLORS.coral, bg: COLORS.coralD }], 15: [{ t: 'Dashboard Go-Live', c: COLORS.green, bg: COLORS.greenD }], 18: [{ t: 'Automation Sprint', c: COLORS.purple, bg: COLORS.purpleD }], 20: [{ t: 'Migration Phase 2', c: COLORS.teal, bg: COLORS.tealD }], 24: [{ t: 'Weekly Sync', c: COLORS.burg, bg: COLORS.burgDim }, { t: 'Inventory Dash DUE', c: COLORS.red, bg: COLORS.redD }], 26: [{ t: 'Sales Dash Review', c: COLORS.blue, bg: COLORS.blueD }], 27: [{ t: 'Snapshot Report DUE', c: COLORS.amber, bg: COLORS.amberD }], 30: [{ t: 'Process Automation', c: COLORS.green, bg: COLORS.greenD }] };
-    const prevDays = [23, 24, 25, 26, 27, 28];
-    const monthDays = Array.from({ length: 31 }, (_, i) => i + 1);
-    const nextDays = [1, 2, 3, 4, 5];
+    const [curDate, setCurDate] = useState(new Date());
+    const DAYS        = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const MONTH_ABBR  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const EV_COLOR    = [COLORS.teal, COLORS.blue, COLORS.purple, COLORS.amber, COLORS.coral, COLORS.green];
+    const EV_BG       = [COLORS.tealD, COLORS.blueD, COLORS.purpleD, COLORS.amberD, COLORS.coralD, COLORS.greenD];
+
+    const year  = curDate.getFullYear();
+    const month = curDate.getMonth();
+
+    // Parse "Apr 5" or "May 30, 2025" → { month (0-based), day }
+    const parseDate = (str) => {
+      if (!str) return null;
+      const m = str.match(/([A-Za-z]{3})\s+(\d{1,2})/);
+      if (!m) return null;
+      const mi = MONTH_ABBR.indexOf(m[1]);
+      return mi >= 0 ? { month: mi, day: parseInt(m[2]) } : null;
+    };
+
+    // Build event map: day → [task, ...]  (only tasks due this month)
+    const eventMap = {};
+    tasks.forEach((task, i) => {
+      const parsed = parseDate(task.due_date || task.due);
+      if (!parsed || parsed.month !== month) return;
+      if (!eventMap[parsed.day]) eventMap[parsed.day] = [];
+      eventMap[parsed.day].push({ ...task, _ci: i % EV_COLOR.length });
+    });
+
+    // Grid calculations
+    const firstWeekday  = new Date(year, month, 1).getDay();
+    const daysInMonth   = new Date(year, month + 1, 0).getDate();
+    const prevMonthDays = new Date(year, month, 0).getDate();
+    const prevPad  = Array.from({ length: firstWeekday }, (_, i) => prevMonthDays - firstWeekday + i + 1);
+    const monthArr = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+    const totalCells = Math.ceil((firstWeekday + daysInMonth) / 7) * 7;
+    const nextPad  = Array.from({ length: totalCells - firstWeekday - daysInMonth }, (_, i) => i + 1);
+
+    const today   = new Date();
+    const isToday = (d) => today.getFullYear() === year && today.getMonth() === month && today.getDate() === d;
+    const navBtn  = (onClick, icon) => (
+      <div onClick={onClick} style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #E2E0E5', cursor: 'pointer', color: '#5A5860' }}>{icon}</div>
+    );
+
     return (
       <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><div style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #E2E0E5', cursor: 'pointer', color: '#5A5860' }}><ChevronLeft size={14} /></div><div style={{ fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 700, color: COLORS.charcoal }}>March 2025</div><div style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #E2E0E5', cursor: 'pointer', color: '#5A5860' }}><ChevronRight size={14} /></div></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          {navBtn(() => setCurDate(new Date(year, month - 1, 1)), <ChevronLeft size={14} />)}
+          <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 700, color: COLORS.charcoal, minWidth: 180, textAlign: 'center' }}>
+            {MONTH_NAMES[month]} {year}
+          </div>
+          {navBtn(() => setCurDate(new Date(year, month + 1, 1)), <ChevronRight size={14} />)}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 1, background: '#E2E0E5' }}>
-          {days.map(d => <div key={d} style={{ background: '#fff', padding: 8, textAlign: 'center', fontSize: 11, color: '#918E98', textTransform: 'uppercase', letterSpacing: 0.5 }}>{d}</div>)}
-          {prevDays.map(d => <div key={`p${d}`} style={{ background: '#fff', minHeight: 90, padding: 7 }}><div style={{ fontSize: 12, color: '#918E98', marginBottom: 4 }}>{d}</div></div>)}
-          {monthDays.map(d => (
-            <div key={d} style={{ background: d === 24 ? COLORS.burgDim : '#fff', minHeight: 90, padding: 7, cursor: 'pointer' }}>
-              <div style={{ fontSize: 12, color: d === 24 ? COLORS.burg : '#5A5860', marginBottom: 4, fontWeight: d === 24 ? 700 : 500 }}>{d}</div>
-              {(events[d] || []).map((ev, i) => <div key={i} style={{ fontSize: 10, padding: '2px 5px', borderRadius: 3, marginBottom: 2, background: ev.bg, color: ev.c, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.t}</div>)}
+          {DAYS.map(d => <div key={d} style={{ background: '#fff', padding: 8, textAlign: 'center', fontSize: 11, color: '#918E98', textTransform: 'uppercase', letterSpacing: 0.5 }}>{d}</div>)}
+          {prevPad.map((d, i) => <div key={`p${i}`} style={{ background: '#F9F8FA', minHeight: 90, padding: 7 }}><div style={{ fontSize: 12, color: '#C4C2C8', marginBottom: 4 }}>{d}</div></div>)}
+          {monthArr.map(d => (
+            <div key={d} style={{ background: isToday(d) ? COLORS.burgDim : '#fff', minHeight: 90, padding: 7 }}>
+              <div style={{ fontSize: 12, color: isToday(d) ? COLORS.burg : '#5A5860', marginBottom: 4, fontWeight: isToday(d) ? 700 : 400 }}>{d}</div>
+              {(eventMap[d] || []).map(ev => (
+                <div key={ev.id} style={{ fontSize: 10, padding: '2px 5px', borderRadius: 3, marginBottom: 2, background: EV_BG[ev._ci], color: EV_COLOR[ev._ci], overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {ev.title}
+                </div>
+              ))}
             </div>
           ))}
-          {nextDays.map(d => <div key={`n${d}`} style={{ background: '#fff', minHeight: 90, padding: 7 }}><div style={{ fontSize: 12, color: '#918E98', marginBottom: 4 }}>{d}</div></div>)}
+          {nextPad.map((d, i) => <div key={`n${i}`} style={{ background: '#F9F8FA', minHeight: 90, padding: 7 }}><div style={{ fontSize: 12, color: '#C4C2C8', marginBottom: 4 }}>{d}</div></div>)}
         </div>
+        {Object.keys(eventMap).length === 0 && (
+          <p style={{ textAlign: 'center', color: '#918E98', fontSize: 13, marginTop: 24 }}>No tasks due this month. Tasks with a due date will appear here.</p>
+        )}
       </div>
     );
   };
 
   /* ── TIMELINE VIEW ── */
   const TimelineView = () => {
-    const rows = [
-      { name: 'Data Migration', left: 20, width: 50, color: COLORS.teal, bg: COLORS.tealD, label: 'Data Migration' },
-      { name: 'Power BI Inventory', left: 22, width: 25, color: COLORS.blue, bg: COLORS.blueD, label: 'Inventory Dash' },
-      { name: 'Power BI Sales', left: 24, width: 45, color: COLORS.amber, bg: COLORS.amberD, label: 'Sales Dash' },
-      { name: 'Power BI Customer Perf.', left: 42, width: 40, color: COLORS.coral, bg: COLORS.coralD, label: 'Customer Perf.' },
-      { name: 'Weekly Snapshot', left: 5, width: 80, color: COLORS.purple, bg: COLORS.purpleD, label: 'Ongoing' },
-      { name: 'Process Automation', left: 30, width: 50, color: COLORS.green, bg: COLORS.greenD, label: 'Automation' },
-    ];
+    const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const now = new Date();
+
+    // Visible range: 1 month back → 5 months forward (6 columns total)
+    const rangeStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const rangeEnd   = new Date(now.getFullYear(), now.getMonth() + 5, 0);
+    const rangeDays  = (rangeEnd - rangeStart) / 864e5;
+    const monthCols  = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - 1 + i, 1);
+      return MONTH_ABBR[d.getMonth()];
+    });
+
+    const parseDate = (str) => {
+      if (!str || str === 'Ongoing') return null;
+      const m = str.match(/([A-Za-z]{3})\s+(\d{1,2})(?:,?\s*(\d{4}))?/);
+      if (!m) return null;
+      const mi = MONTH_ABBR.indexOf(m[1]);
+      const yr = m[3] ? parseInt(m[3]) : now.getFullYear();
+      return mi >= 0 ? new Date(yr, mi, parseInt(m[2])) : null;
+    };
+
+    const toPct = (date) => Math.max(0, Math.min(100, ((date - rangeStart) / 864e5 / rangeDays) * 100));
+
+    const rows = projects.map(p => {
+      const start = parseDate(p.start_date || p.start) || rangeStart;
+      const end   = parseDate(p.due_date   || p.due)   || rangeEnd;
+      const left  = toPct(start);
+      const width = Math.max(toPct(end) - left, 2);
+      return { ...p, left, width };
+    });
+
+    if (projects.length === 0) {
+      return (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#918E98' }}>
+          <GitBranch size={36} style={{ opacity: 0.35 }} />
+          <div style={{ fontSize: 14 }}>No projects yet.</div>
+          <div style={{ fontSize: 12 }}>Create a project and its timeline will appear here.</div>
+        </div>
+      );
+    }
+
     return (
       <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
-        <div style={{ marginBottom: 16 }}><h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal, marginBottom: 4 }}>Project Timeline</h2><p style={{ color: '#5A5860', fontSize: 12 }}>Gantt-style overview of all active projects — Q1/Q2 2025.</p></div>
+        <div style={{ marginBottom: 16 }}>
+          <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal, marginBottom: 4 }}>Project Timeline</h2>
+          <p style={{ color: '#5A5860', fontSize: 12 }}>Gantt-style overview of your projects based on their start and due dates.</p>
+        </div>
         <Panel>
           <div style={{ overflowX: 'auto' }}>
-            <div style={{ minWidth: 900 }}>
+            <div style={{ minWidth: 700 }}>
               <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', borderBottom: '1px solid #E2E0E5', marginBottom: 4 }}>
                 <div style={{ fontSize: 11, color: '#918E98', padding: '6px 12px' }}>Project</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)' }}>
-                  {['Feb', 'Mar', 'Apr', 'May', 'Jun'].map(m => <div key={m} style={{ fontSize: 10, color: '#918E98', textAlign: 'center', padding: '6px 0', letterSpacing: 0.5, textTransform: 'uppercase' }}>{m}</div>)}
+                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${monthCols.length},1fr)` }}>
+                  {monthCols.map(m => <div key={m} style={{ fontSize: 10, color: '#918E98', textAlign: 'center', padding: '6px 0', letterSpacing: 0.5, textTransform: 'uppercase' }}>{m}</div>)}
                 </div>
               </div>
-              {rows.map((r, i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '160px 1fr', marginBottom: 6, alignItems: 'center' }}>
+              {rows.map(r => (
+                <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '160px 1fr', marginBottom: 6, alignItems: 'center' }}>
                   <div style={{ fontSize: 12, color: '#5A5860', padding: '0 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
                   <div style={{ position: 'relative', height: 28, display: 'flex', alignItems: 'center' }}>
-                    <div style={{ position: 'absolute', left: `${r.left}%`, width: `${r.width}%`, height: 20, borderRadius: 4, background: r.bg, color: r.color, border: `1px solid ${r.color}`, display: 'flex', alignItems: 'center', padding: '0 8px', fontSize: 10, fontWeight: 500, overflow: 'hidden', whiteSpace: 'nowrap', cursor: 'pointer' }}>{r.label}</div>
+                    <div style={{ position: 'absolute', left: `${r.left}%`, width: `${r.width}%`, height: 20, borderRadius: 4, background: r.color + '22', color: r.color, border: `1px solid ${r.color}`, display: 'flex', alignItems: 'center', padding: '0 8px', fontSize: 10, fontWeight: 500, overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                      {r.name}
+                    </div>
                   </div>
                 </div>
               ))}

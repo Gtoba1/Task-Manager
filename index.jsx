@@ -1577,9 +1577,14 @@ export default function App() {
       status: memberModal?.status || 'Online',
     });
     const [uploading, setUploading] = useState(false);
+    const [showPassSection, setShowPassSection] = useState(false);
+    const [newPass, setNewPass]     = useState('');
+    const [confirmPass, setConfirm] = useState('');
+    const [passError, setPassError] = useState('');
     const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-    const canEditEmail = authUser?.role === 'admin' || authUser?.initials === memberModal?.key;
+    const isSelf      = authUser?.initials === memberModal?.key;
+    const canEditEmail = authUser?.role === 'admin' || isSelf;
 
     // ── Photo upload handler ────────────────────────────────────
     const handlePhotoChange = async (e) => {
@@ -1603,10 +1608,21 @@ export default function App() {
       }
     };
 
+    const handleSave = () => {
+      if (!form.name || !form.role) return;
+      if (showPassSection) {
+        if (newPass && newPass.length < 8) return setPassError('Password must be at least 8 characters.');
+        if (newPass !== confirmPass)        return setPassError('Passwords do not match.');
+      }
+      const payload = { ...form };
+      if (showPassSection && newPass) payload.password = newPass;
+      saveMember(memberModal.key, payload);
+    };
+
     return (
-      <Modal open title="Edit Team Member" subtitle="Update profile photo, name, email and status."
+      <Modal open title="Edit Profile" subtitle="Update your photo, name, email, status or password."
         onClose={() => setMemberModal(null)}
-        footer={<><Btn onClick={() => setMemberModal(null)}>Cancel</Btn><Btn primary onClick={() => { if (!form.name || !form.role) return; saveMember(memberModal.key, form); }}>Save Changes</Btn></>}>
+        footer={<><Btn onClick={() => setMemberModal(null)}>Cancel</Btn><Btn primary onClick={handleSave}>Save Changes</Btn></>}>
 
         {/* ── Profile photo picker ── */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 18, padding: '12px 14px', background: '#F4F3F5', borderRadius: 8 }}>
@@ -1659,6 +1675,43 @@ export default function App() {
             </select>
           </FormField>
         </div>
+
+        {/* ── Change password — only shown when editing own profile ── */}
+        {isSelf && (
+          <div style={{ marginTop: 16, borderTop: '1px solid #E2E0E5', paddingTop: 14 }}>
+            <button
+              type="button"
+              onClick={() => { setShowPassSection(v => !v); setNewPass(''); setConfirm(''); setPassError(''); }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: COLORS.burg, fontWeight: 600, padding: 0, textDecoration: 'underline' }}
+            >
+              {showPassSection ? 'Cancel password change' : 'Change my password'}
+            </button>
+
+            {showPassSection && (
+              <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <FormField label="New Password">
+                  <input
+                    type="password" style={inputStyle} value={newPass}
+                    onChange={e => { setNewPass(e.target.value); setPassError(''); }}
+                    placeholder="Min. 8 characters" autoFocus
+                  />
+                </FormField>
+                <FormField label="Confirm New Password">
+                  <input
+                    type="password" style={inputStyle} value={confirmPass}
+                    onChange={e => { setConfirm(e.target.value); setPassError(''); }}
+                    placeholder="Type again to confirm"
+                  />
+                </FormField>
+                {passError && (
+                  <div style={{ gridColumn: '1/-1', padding: '8px 12px', borderRadius: 6, background: '#FCEAEA', border: '1px solid #F5C6C6', fontSize: 12, color: '#D63B3B' }}>
+                    {passError}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
     );
   };

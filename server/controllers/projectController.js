@@ -5,7 +5,7 @@
 
 const pool = require('../db/pool');
 // Issue #2: email notifications when members are added to a project
-const { sendEmail } = require('../utils/email');
+const { sendEmail, buildEmailHtml } = require('../utils/email');
 
 // ── Helper: fetch a single project with members and tags ──────
 // Uses subqueries to avoid the DISTINCT + JSON_AGG incompatibility in PostgreSQL
@@ -136,20 +136,28 @@ async function createProject(req, res) {
         );
         for (const member of memberRows.rows) {
           if (!member.email) continue;
+          const appUrl = process.env.APP_URL || 'http://localhost:5173';
           sendEmail({
             to:      member.email,
-            subject: `You've been added to project: ${name}`,
+            subject: `You've been added to a project: ${name}`,
             text:    `Hi ${member.name},\n\n` +
                      `${req.user.name} has added you to a project.\n\n` +
-                     `Project: ${name}\n` +
-                     (due_date ? `Due    : ${due_date}\n` : '') +
-                     `\nLog in to the Data Team Dashboard to view it.`,
-            html:    `<p>Hi <strong>${member.name}</strong>,</p>` +
-                     `<p><strong>${req.user.name}</strong> has added you to a project.</p>` +
-                     `<table style="border-collapse:collapse;font-size:14px">` +
-                     `<tr><td style="padding:4px 12px 4px 0;color:#666">Project</td><td><strong>${name}</strong></td></tr>` +
-                     (due_date ? `<tr><td style="padding:4px 12px 4px 0;color:#666">Due</td><td>${due_date}</td></tr>` : '') +
-                     `</table><p>Log in to the Data Team Dashboard to view it.</p>`,
+                     `Project : ${name}\n` +
+                     (type     ? `Type    : ${type}\n`     : '') +
+                     (due_date ? `Due     : ${due_date}\n` : '') +
+                     `\nOpen the Task Manager here: ${appUrl}`,
+            html: buildEmailHtml({
+              greeting:   `Hi ${member.name},`,
+              intro:      `<strong>${req.user.name}</strong> has added you to a project on the TD Africa Data Team Task Manager.`,
+              rows: [
+                ['Project', `<strong>${name}</strong>`],
+                ['Type',    type],
+                ['Due',     due_date],
+                ['Added by', req.user.name],
+              ],
+              buttonText: 'View Project in Task Manager',
+              buttonUrl:  appUrl,
+            }),
           });
         }
       }

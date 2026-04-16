@@ -6,7 +6,7 @@
 const pool            = require('../db/pool');
 const { logActivity } = require('./commentController');
 // Issue #2: email notifications when a task is assigned or reassigned
-const { sendEmail }   = require('../utils/email');
+const { sendEmail, buildEmailHtml } = require('../utils/email');
 
 // ── Helper: fetch a single task with all its details ─────────
 async function fetchTask(taskId) {
@@ -148,22 +148,28 @@ async function createTask(req, res) {
         );
         const assignee = assigneeResult.rows[0];
         if (assignee?.email) {
+          const appUrl = process.env.APP_URL || 'http://localhost:5173';
           sendEmail({
             to:      assignee.email,
-            subject: `You've been assigned a task: ${title}`,
+            subject: `New task assigned to you: ${title}`,
             text:    `Hi ${assignee.name},\n\n` +
                      `${req.user.name} has assigned you a new task.\n\n` +
                      `Task   : ${title}\n` +
                      (description ? `Details: ${description}\n` : '') +
                      (due_date    ? `Due    : ${due_date}\n`    : '') +
-                     `\nLog in to the Data Team Dashboard to view it.`,
-            html:    `<p>Hi <strong>${assignee.name}</strong>,</p>` +
-                     `<p><strong>${req.user.name}</strong> has assigned you a new task.</p>` +
-                     `<table style="border-collapse:collapse;font-size:14px">` +
-                     `<tr><td style="padding:4px 12px 4px 0;color:#666">Task</td><td><strong>${title}</strong></td></tr>` +
-                     (description ? `<tr><td style="padding:4px 12px 4px 0;color:#666">Details</td><td>${description}</td></tr>` : '') +
-                     (due_date    ? `<tr><td style="padding:4px 12px 4px 0;color:#666">Due</td><td>${due_date}</td></tr>` : '') +
-                     `</table><p>Log in to the Data Team Dashboard to view it.</p>`,
+                     `\nOpen the Task Manager here: ${appUrl}`,
+            html: buildEmailHtml({
+              greeting:   `Hi ${assignee.name},`,
+              intro:      `<strong>${req.user.name}</strong> has assigned you a new task on the TD Africa Data Team Task Manager.`,
+              rows: [
+                ['Task',    `<strong>${title}</strong>`],
+                ['Details', description],
+                ['Due',     due_date],
+                ['Assigned by', req.user.name],
+              ],
+              buttonText: 'View Task in Task Manager',
+              buttonUrl:  appUrl,
+            }),
           });
         }
       }
@@ -238,16 +244,24 @@ async function updateTask(req, res) {
         const assignee = assigneeResult.rows[0];
         if (assignee?.email) {
           const taskTitle = title || existing.rows[0].title;
+          const appUrl    = process.env.APP_URL || 'http://localhost:5173';
           sendEmail({
             to:      assignee.email,
-            subject: `You've been assigned a task: ${taskTitle}`,
+            subject: `Task reassigned to you: ${taskTitle}`,
             text:    `Hi ${assignee.name},\n\n` +
                      `${req.user.name} has assigned you a task.\n\n` +
                      `Task: ${taskTitle}\n` +
-                     `\nLog in to the Data Team Dashboard to view it.`,
-            html:    `<p>Hi <strong>${assignee.name}</strong>,</p>` +
-                     `<p><strong>${req.user.name}</strong> has assigned you a task: <strong>${taskTitle}</strong></p>` +
-                     `<p>Log in to the Data Team Dashboard to view it.</p>`,
+                     `\nOpen the Task Manager here: ${appUrl}`,
+            html: buildEmailHtml({
+              greeting:   `Hi ${assignee.name},`,
+              intro:      `<strong>${req.user.name}</strong> has assigned you a task on the TD Africa Data Team Task Manager.`,
+              rows: [
+                ['Task',        `<strong>${taskTitle}</strong>`],
+                ['Assigned by', req.user.name],
+              ],
+              buttonText: 'View Task in Task Manager',
+              buttonUrl:  appUrl,
+            }),
           });
         }
       }

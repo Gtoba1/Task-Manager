@@ -51,7 +51,15 @@ const MEMBER_ROLES  = { SO: 'Data Team Lead', TG: 'Data Analyst', SA: 'Data Anal
 // Keyed by initials (e.g. AVATAR_URLS['SO'] = '/uploads/avatars/3-17123456.jpg')
 const AVATAR_URLS   = {};
 const DEPT_STYLES = { bu: { bg: COLORS.blueD, fg: COLORS.blue, label: 'BU' }, bg: { bg: COLORS.tealD, fg: COLORS.teal, label: 'BG' } };
-const STATUS_PILLS = { planning: { bg: COLORS.blueD, fg: COLORS.blue, label: 'Planning' }, active: { bg: COLORS.tealD, fg: COLORS.teal, label: 'Active' }, review: { bg: COLORS.amberD, fg: COLORS.amber, label: 'In Review' }, draft: { bg: COLORS.purpleD, fg: COLORS.purple, label: 'Draft' }, done: { bg: COLORS.greenD, fg: COLORS.green, label: 'Done' } };
+const STATUS_PILLS = {
+  planning:  { bg: COLORS.blueD,   fg: COLORS.blue,   label: 'Planning'  },
+  active:    { bg: COLORS.tealD,   fg: COLORS.teal,   label: 'Active'    },
+  review:    { bg: COLORS.amberD,  fg: COLORS.amber,  label: 'In Review' },
+  draft:     { bg: COLORS.purpleD, fg: COLORS.purple, label: 'Draft'     },
+  // on-hold and done added so projects can be marked as paused or completed
+  'on-hold': { bg: '#F0EDFF',      fg: '#7A50D0',     label: 'On Hold'   },
+  done:      { bg: COLORS.greenD,  fg: COLORS.green,  label: 'Done'      },
+};
 const PRIORITY_DOT = { h: COLORS.red, m: COLORS.amber, l: COLORS.green };
 
 // ── Date conversion helpers ───────────────────────────────────
@@ -340,8 +348,8 @@ export default function App() {
 
   const openTasks    = tasks.filter(t => t.status !== 'done').length;
   const doneTasks    = tasks.filter(t => t.status === 'done').length;
-  // "Ongoing" = any project not yet completed (includes planning, active, on-hold, draft)
-  const activeProjects = projects.filter(p => p.status !== 'completed').length;
+  // "Ongoing" = any project not yet done (includes planning, active, on-hold, draft, review)
+  const activeProjects = projects.filter(p => p.status !== 'done').length;
   const activeTask   = tasks.find(t => t.id === activeTaskId);
 
   /* ── TASK ACTIONS ── */
@@ -640,7 +648,7 @@ export default function App() {
       .filter(t => t._d);
 
     const upcomingProjects = projects
-      .filter(p => p.status !== 'completed' && (p.due_date || p.due) && (p.due_date || p.due) !== 'Ongoing')
+      .filter(p => p.status !== 'done' && (p.due_date || p.due) && (p.due_date || p.due) !== 'Ongoing')
       .map(p => { const due = p.due_date || p.due; return { _type: 'project', id: p.id, title: p.name, subLabel: p.type || 'Project', _d: parseTaskDate(due), _due: due, _color: p.color }; })
       .filter(p => p._d);
 
@@ -660,7 +668,7 @@ export default function App() {
         (t.ass === k || t.assignee_initials === k) && !['done', 'approved'].includes(t.status)
       ).length;
       const activeProjectCount = projects.filter(p =>
-        p.status !== 'completed' && (p.members || []).includes(k)
+        p.status !== 'done' && (p.members || []).includes(k)
       ).length;
       return { k, total: activeTasks + activeProjectCount };
     });
@@ -686,7 +694,7 @@ export default function App() {
         <Panel title="Ongoing Projects" action="View all →" actionClick={() => goNav('projects')}>
           {projects.length === 0
             ? <p style={{ fontSize: 12, color: '#918E98', padding: '8px 0' }}>No projects yet. Create your first project to get started.</p>
-            : projects.filter(p => p.status !== 'completed').slice(0, 5).map(p => (
+            : projects.filter(p => p.status !== 'done').slice(0, 5).map(p => (
               <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #E2E0E5' }}>
                 <div style={{ width: 3, height: 36, borderRadius: 2, background: p.color, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -2020,7 +2028,7 @@ export default function App() {
           {/* Status */}
           <FormField label="Status">
             <select style={inputStyle} value={form.status} onChange={e => upd('status', e.target.value)}>
-              {['planning','active','review','draft'].map(s => <option key={s} value={s}>{STATUS_PILLS[s].label}</option>)}
+              {['planning','active','on-hold','review','draft','done'].map(s => <option key={s} value={s}>{STATUS_PILLS[s].label}</option>)}
             </select>
           </FormField>
 

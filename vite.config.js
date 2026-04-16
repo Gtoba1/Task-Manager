@@ -16,6 +16,9 @@ export default defineConfig({
     proxy: {
       '/api':     'http://localhost:3001',
       '/uploads': 'http://localhost:3001', // avatar photos
+      // Forward Socket.io WebSocket connections to Express in development.
+      // In production the client and server share the same origin so no proxy is needed.
+      '/socket.io': { target: 'http://localhost:3001', ws: true },
     },
   },
 })

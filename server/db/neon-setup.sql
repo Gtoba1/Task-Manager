@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   token      VARCHAR(64) NOT NULL UNIQUE,
   expires_at TIMESTAMPTZ NOT NULL,
   used       BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMEI STAMPTZ DEFAULT NOW()
 );
 
 

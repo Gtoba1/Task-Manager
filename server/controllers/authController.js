@@ -5,6 +5,7 @@ const bcrypt = require('bcrypt');
 const jwt    = require('jsonwebtoken');
 const crypto = require('crypto');   // built into Node — no install needed
 const pool   = require('../db/pool');
+const { sendEmail, buildEmailHtml } = require('../utils/email');
 
 // ── POST /api/auth/login ──────────────────────────────────────
 // Body: { email, password }
@@ -128,14 +129,26 @@ async function forgotPassword(req, res) {
     const appUrl   = process.env.APP_URL || 'http://localhost:5173';
     const resetUrl = `${appUrl}?reset_token=${token}`;
 
-    // ── Log to server console so the admin can copy + share the link ──
-    // ── If you configure SMTP in .env, an email will be sent instead  ──
+    // Always log so an admin can manually share the link if email is not configured
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('🔑  PASSWORD RESET REQUESTED');
     console.log(`    User  : ${user.name}  (${user.email})`);
-    console.log('    Copy and share this link (expires in 1 hour):');
-    console.log(`    ${resetUrl}`);
+    console.log(`    Link  : ${resetUrl}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+    // Send the reset link by email (non-fatal — console link still works as fallback)
+    sendEmail({
+      to:      user.email,
+      subject: 'Reset your Task Manager password',
+      text:    `Hi ${user.name},\n\nSomeone requested a password reset for your account.\n\nClick this link to set a new password (expires in 1 hour):\n${resetUrl}\n\nIf you didn't request this, you can ignore this email.`,
+      html: buildEmailHtml({
+        greeting:   `Hi ${user.name},`,
+        intro:      'Someone requested a password reset for your TD Africa Data Team Task Manager account. Click the button below to set a new password. This link expires in <strong>1 hour</strong>.',
+        rows:       [],
+        buttonText: 'Reset My Password',
+        buttonUrl:  resetUrl,
+      }),
+    });
 
     res.json({ message: 'ok' });
 

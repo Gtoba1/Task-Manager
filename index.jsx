@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
-import { LayoutDashboard, FolderKanban, ListTodo, Users, CalendarDays, GitBranch, BarChart3, Bell, Search, Plus, X, ChevronLeft, ChevronRight, Pencil, Trash2, AlertCircle, LogOut, ShieldCheck, MessageSquare, Send } from "lucide-react";
+import { LayoutDashboard, FolderKanban, ListTodo, Users, CalendarDays, GitBranch, BarChart3, Bell, Search, Plus, X, ChevronLeft, ChevronRight, Pencil, Trash2, AlertCircle, LogOut, ShieldCheck, MessageSquare, Send, Eye, EyeOff } from "lucide-react";
 import { useAuth } from './src/AuthContext';
 import { useSocket, showDesktopNotification } from './src/SocketContext';
 import * as API from './src/api';
@@ -2233,21 +2233,40 @@ export default function App() {
       <Modal open title="Add Team Member" subtitle="Create an account for a new team member. They can log in immediately."
         onClose={() => setAddMemberModal(false)}
         footer={<><Btn onClick={() => setAddMemberModal(false)}>Cancel</Btn><Btn primary onClick={() => { if (!form.name || !form.email || !form.password) return; addMember(form); }}>Create Account</Btn></>}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <FormField label="Full Name *"><input style={inputStyle} value={form.name} onChange={e => handleName(e.target.value)} placeholder="e.g. Jane Doe" /></FormField>
-          <FormField label="Initials (auto)"><input style={inputStyle} value={form.initials} onChange={e => upd('initials', e.target.value.toUpperCase().slice(0,3))} placeholder="e.g. JD" /></FormField>
-          <FormField label="Email *"><input style={inputStyle} type="email" value={form.email} onChange={e => upd('email', e.target.value)} placeholder="jane@tdafrica.com" /></FormField>
-          <FormField label="Job Title"><input style={inputStyle} value={form.job_title} onChange={e => upd('job_title', e.target.value)} placeholder="e.g. Data Analyst" /></FormField>
-          <FormField label="Password *">
-            <div style={{ position: 'relative' }}>
-              <input style={{ ...inputStyle, paddingRight: 36 }} type={showPw ? 'text' : 'password'} value={form.password} onChange={e => upd('password', e.target.value)} placeholder="Set a temporary password" />
-              <button type="button" onClick={() => setShowPw(v => !v)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#848688', padding: 0 }}>
-                {showPw ? '🙈' : '👁️'}
-              </button>
-            </div>
+        {/* Row 1: Name (wider) + Initials (narrower) */}
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
+          <FormField label="Full Name *">
+            <input style={inputStyle} value={form.name} onChange={e => handleName(e.target.value)} placeholder="e.g. Jane Doe" autoComplete="off" />
           </FormField>
-          <FormField label="Role"><select style={inputStyle} value={form.role} onChange={e => upd('role', e.target.value)}><option value="member">Member</option><option value="admin">Admin</option></select></FormField>
+          <FormField label="Initials">
+            <input style={inputStyle} value={form.initials} onChange={e => upd('initials', e.target.value.toUpperCase().slice(0,3))} placeholder="e.g. JD" autoComplete="off" />
+          </FormField>
         </div>
+        {/* Row 2: Email (full width — prevents browser auto-fill bleed) */}
+        <FormField label="Email *">
+          <input style={inputStyle} type="email" value={form.email} onChange={e => upd('email', e.target.value)} placeholder="jane@tdafrica.com" autoComplete="off" />
+        </FormField>
+        {/* Row 3: Job Title + Role side by side */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <FormField label="Job Title">
+            <input style={inputStyle} value={form.job_title} onChange={e => upd('job_title', e.target.value)} placeholder="e.g. Data Analyst" autoComplete="off" />
+          </FormField>
+          <FormField label="Role">
+            <select style={inputStyle} value={form.role} onChange={e => upd('role', e.target.value)}>
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </select>
+          </FormField>
+        </div>
+        {/* Row 4: Password (full width) */}
+        <FormField label="Password *">
+          <div style={{ position: 'relative' }}>
+            <input style={{ ...inputStyle, paddingRight: 36 }} type={showPw ? 'text' : 'password'} value={form.password} onChange={e => upd('password', e.target.value)} placeholder="Set a temporary password" autoComplete="new-password" />
+            <button type="button" onClick={() => setShowPw(v => !v)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#848688', padding: 0, display: 'flex', alignItems: 'center' }}>
+              {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+            </button>
+          </div>
+        </FormField>
         <div style={{ marginTop: 8, padding: '10px 12px', background: '#F4F3F5', borderRadius: 6, fontSize: 12, color: '#5A5860' }}>
           The member will log in at <strong>this app's URL</strong> using their email and the password you set here. Advise them to change it after first login.
         </div>

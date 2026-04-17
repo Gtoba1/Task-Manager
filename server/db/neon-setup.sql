@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS projects (
   color       VARCHAR(20)  DEFAULT '#0E8C88',
   start_date  VARCHAR(40),
   due_date    VARCHAR(40),
-  created_by  INTEGER REFERENCES users(id),
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at  TIMESTAMPTZ  DEFAULT NOW()
 );
 
@@ -60,9 +60,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority    VARCHAR(10)  DEFAULT 'm',
   dept        VARCHAR(10)  DEFAULT 'bu',
   due_date    VARCHAR(40),
-  assignee_id INTEGER REFERENCES users(id),
+  assignee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   project_id  INTEGER REFERENCES projects(id),
-  created_by  INTEGER REFERENCES users(id),
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at  TIMESTAMPTZ  DEFAULT NOW()
 );
 
@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   token      VARCHAR(64) NOT NULL UNIQUE,
   expires_at TIMESTAMPTZ NOT NULL,
   used       BOOLEAN DEFAULT false,
-  created_at TIMEI STAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 

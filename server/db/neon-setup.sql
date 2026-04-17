@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS task_comments (
 CREATE TABLE IF NOT EXISTS task_activity (
   id         SERIAL PRIMARY KEY,
   task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+  user_id    INTEGER      REFERENCES users(id) ON DELETE SET NULL,
   action     VARCHAR(50) NOT NULL,
   detail     TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()

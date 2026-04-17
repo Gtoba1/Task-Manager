@@ -581,7 +581,7 @@ export default function App() {
       </div>
       <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
         <div
-          onClick={() => setMemberModal({ key: authUser?.initials, name: authUser?.name || '', email: authUser?.email || '', role: authUser?.job_title || '', status: authUser?.status || 'Online', ...(members[authUser?.initials] || {}) })}
+          onClick={() => setMemberModal({ key: authUser?.initials, name: authUser?.name || '', email: authUser?.email || '', role: authUser?.job_title || '', status: authUser?.status || 'Online' })}
           style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 6, cursor: 'pointer' }}
           title="View profile"
         >
@@ -1806,16 +1806,19 @@ export default function App() {
 
                 {/* Status */}
                 <div>
-                  <span style={{ fontSize: 10, fontWeight: 500, padding: '3px 8px', borderRadius: 20, background: COLORS.greenD, color: COLORS.green }}>
-                    {u.status || 'Online'}
-                  </span>
+                  {(() => {
+                    const s = u.status || 'Online';
+                    const sc = { Online: { bg: COLORS.greenD, fg: COLORS.green }, Away: { bg: '#FBF4E6', fg: '#C88A18' }, 'In Meeting': { bg: '#EEF2FF', fg: '#5B78D4' }, Focused: { bg: '#F0EAF9', fg: '#7A50D0' }, 'Out of Office': { bg: COLORS.redD, fg: COLORS.red } };
+                    const { bg, fg } = sc[s] || sc.Online;
+                    return <span style={{ fontSize: 10, fontWeight: 500, padding: '3px 8px', borderRadius: 20, background: bg, color: fg }}>{s}</span>;
+                  })()}
                 </div>
 
                 {/* Action buttons */}
                 <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
                   {/* Edit profile (name, job title, status) */}
                   <Btn sm title="Edit profile"
-                    onClick={() => setMemberModal({ key: u.initials, name: u.name, email: u.email || '', role: u.job_title || '', status: u.status || 'Online', ...members[u.initials] })}>
+                    onClick={() => setMemberModal({ key: u.initials, name: u.name, email: u.email || '', role: u.job_title || '', status: u.status || 'Online' })}>
                     <Pencil size={11} />
                   </Btn>
                   {/* Reset password */}
@@ -2218,7 +2221,7 @@ export default function App() {
 
   /* ═══════ ADD MEMBER MODAL (admin only) ═══════ */
   const AddMemberForm = () => {
-    const [form, setForm] = useState({ name: '', email: '', password: '', job_title: '', role: 'member', initials: '' });
+    const [form, setForm] = useState({ name: '', email: '', password: '', job_title: 'Data Analyst', role: 'member', initials: '' });
     const [showPw, setShowPw] = useState(false);
     const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
     // Auto-generate initials as the name is typed

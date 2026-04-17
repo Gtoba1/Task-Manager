@@ -524,6 +524,8 @@ export default function App() {
     if (!u) return;
     try {
       await API.deleteUser(u.id);
+      delete MEMBER_NAMES[initials];
+      delete MEMBER_ROLES[initials];
       setMembers(m => { const next = { ...m }; delete next[initials]; return next; });
       setRawUsers(us => us.filter(r => r.initials !== initials));
     } catch (err) {

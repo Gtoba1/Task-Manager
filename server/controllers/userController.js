@@ -3,6 +3,7 @@
 
 const bcrypt = require('bcrypt');
 const pool   = require('../db/pool');
+const { sendEmail, buildEmailHtml } = require('../utils/email');
 
 // ── GET /api/users ────────────────────────────────────────────
 // Returns all users — used for dropdowns and the team view
@@ -73,8 +74,36 @@ async function createUser(req, res) {
       [autoInitials, name.trim(), email.toLowerCase().trim(), hash, role, job_title || null]
     );
 
-    console.log(`👤  New user created by admin: ${result.rows[0].name} (${result.rows[0].role})`);
-    res.status(201).json({ user: result.rows[0] });
+    const newUser = result.rows[0];
+    console.log(`👤  New user created by admin: ${newUser.name} (${newUser.role})`);
+    res.status(201).json({ user: newUser });
+
+    // Send a welcome email so the new member knows their login email address
+    try {
+      const appUrl = process.env.APP_URL || 'http://localhost:5173';
+      sendEmail({
+        to:      newUser.email,
+        subject: 'Your TD Africa Data Team account is ready',
+        text:    `Hi ${newUser.name},\n\n` +
+                 `Your account has been created on the TD Africa Data Team Task Manager.\n\n` +
+                 `Login email : ${newUser.email}\n` +
+                 `Password    : the one your admin shared with you\n\n` +
+                 `If you don't know your password, use "Forgot password?" on the login page to set your own.\n\n` +
+                 `Open the app here: ${appUrl}`,
+        html: buildEmailHtml({
+          greeting:   `Hi ${newUser.name},`,
+          intro:      `Your account has been created on the TD Africa Data Team Task Manager. Use the details below to sign in.`,
+          rows: [
+            ['Login email', `<strong>${newUser.email}</strong>`],
+            ['Password',    'The one your admin shared with you. Use "Forgot password?" on the login page if you need to set your own.'],
+          ],
+          buttonText: 'Open Task Manager',
+          buttonUrl:  appUrl,
+        }),
+      });
+    } catch (emailErr) {
+      console.error('createUser welcome email error (non-fatal):', emailErr.message);
+    }
 
   } catch (err) {
     console.error('createUser error:', err.message);

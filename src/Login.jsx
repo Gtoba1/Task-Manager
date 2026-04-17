@@ -298,9 +298,9 @@ export default function Login() {
                     background: '#F0EAF9', border: '1px solid #D8CCF5',
                     fontSize: 13, color: '#5A3FA0', lineHeight: 1.6,
                   }}>
-                    <strong>What happens next:</strong><br />
-                    Your admin will see a reset link in the server Terminal window.
-                    They'll copy it and send it to you via Teams or email.
+                    <strong>Check your email.</strong><br />
+                    A password reset link has been sent to your email address.
+                    Click the link in the email to set a new password.
                     The link expires after <strong>1 hour</strong>.
                   </div>
                   <button

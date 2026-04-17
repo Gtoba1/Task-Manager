@@ -2174,15 +2174,15 @@ export default function App() {
           </FormField>
         </div>
 
-        {/* ── Change password — only shown when editing own profile ── */}
-        {isSelf && (
+        {/* ── Change password — shown for own profile or when admin edits another user ── */}
+        {(isSelf || authUser?.role === 'admin') && (
           <div style={{ marginTop: 16, borderTop: '1px solid #E2E0E5', paddingTop: 14 }}>
             <button
               type="button"
               onClick={() => { setShowPassSection(v => !v); setNewPass(''); setConfirm(''); setPassError(''); }}
               style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: COLORS.burg, fontWeight: 600, padding: 0, textDecoration: 'underline' }}
             >
-              {showPassSection ? 'Cancel password change' : 'Change my password'}
+              {showPassSection ? 'Cancel password change' : (isSelf ? 'Change my password' : 'Set new password for this member')}
             </button>
 
             {showPassSection && (

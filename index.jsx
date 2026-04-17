@@ -189,9 +189,10 @@ const Panel = ({ title, action, actionClick, children }) => (
 
 const Modal = ({ open, onClose, title, subtitle, children, footer }) => {
   if (!open) return null;
+  const isMob = window.innerWidth < 768;
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, backdropFilter: 'blur(3px)' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', border: '1px solid #D0CDD5', borderRadius: 10, padding: 24, width: 520, maxWidth: '96vw', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: isMob ? 'flex-end' : 'center', justifyContent: 'center', zIndex: 100, backdropFilter: 'blur(3px)' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', border: '1px solid #D0CDD5', borderRadius: isMob ? '14px 14px 0 0' : 10, padding: isMob ? '20px 16px 28px' : 24, width: isMob ? '100%' : 520, maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
         <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 17, fontWeight: 700, color: COLORS.charcoal, marginBottom: 4 }}>{title}</div>
         {subtitle && <div style={{ fontSize: 12, color: '#918E98', marginBottom: 18 }}>{subtitle}</div>}
         {children}
@@ -260,6 +261,8 @@ export default function App() {
   const [dragId, setDragId]               = useState(null);
   const [unreadChat, setUnreadChat]        = useState(0);    // badge on Team Chat nav item
   const [onlineUserIds, setOnlineUserIds]  = useState(new Set()); // real-time presence
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [windowWidth, setWindowWidth]     = useState(window.innerWidth);
 
   // ── Load all data from the API on mount ────────────────────
   const loadData = useCallback(async () => {
@@ -306,6 +309,14 @@ export default function App() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // ── Window resize — track mobile breakpoint ────────────────
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  const isMobile = windowWidth < 768;
+
   // ── Global chat listener — runs when NOT on the chat view ────
   // Increments the unread badge and fires a desktop notification
   // when a new message arrives from someone else.
@@ -333,6 +344,7 @@ export default function App() {
   const goNav = useCallback((id) => {
     setView(id);
     setActiveTaskId(null);
+    setMobileSidebarOpen(false); // close drawer on mobile after navigation
     if (id === 'chat') setUnreadChat(0); // clear badge when opening chat
   }, []);
 
@@ -539,63 +551,86 @@ export default function App() {
 
   /* ═══════ SIDEBAR ═══════ */
   const Sidebar = () => (
-    <nav style={{ width: 222, minWidth: 222, background: '#8F3030', display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', zIndex: 10 }}>
-      {/* ── Sidebar header — logo + company name ── */}
-      <div style={{ padding: '16px 16px 14px', borderBottom: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.15)' }}>
-        {/* Logo image. If the logo doesn't appear, check BRAND.logo path above. */}
-        <img
-          src={BRAND.logo}
-          alt={BRAND.company}
-          style={{ height: 52, maxWidth: '100%', objectFit: 'contain', objectPosition: 'left' }}
-          onError={e => {
-            // Fallback: show text if image fails to load
-            e.target.style.display = 'none';
-            e.target.nextSibling.style.display = 'flex';
-          }}
-        />
-        {/* Text fallback (hidden unless logo fails to load) */}
-        <div style={{ display: 'none', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 34, height: 34, borderRadius: 8, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Syne',sans-serif", fontWeight: 800, fontSize: 12, color: '#fff' }}>TD</div>
-          <div>
-            <div style={{ fontFamily: "'Syne',sans-serif", fontWeight: 700, fontSize: 15, color: '#fff' }}>{BRAND.company}</div>
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 1 }}>{BRAND.subtitle}</div>
-          </div>
-        </div>
-        {/* Subtitle shown below the logo */}
-        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 1, marginTop: 6 }}>{BRAND.subtitle}</div>
-      </div>
-      <div style={{ flex: 1, padding: '10px 8px', overflowY: 'auto' }}>
-        {NAV_ITEMS.filter(item => !item.adminOnly || authUser?.role === 'admin').map((item, i) => {
-          if (item.section) return <div key={i} style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', padding: '10px 8px 6px', fontWeight: 500 }}>{item.section}</div>;
-          const active = view === item.id;
-          const Icon = item.icon;
-          const badgeVal = item.badge === 'camps' ? projects.length : item.badge === 'tasks' ? openTasks : item.badge === 'notifs' ? null : item.badge === 'chat' && unreadChat > 0 ? unreadChat : null;
-          return (
-            <div key={item.id} onClick={() => goNav(item.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', color: active ? '#fff' : 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 1, background: active ? 'rgba(255,255,255,0.18)' : 'transparent', fontWeight: active ? 500 : 400 }}>
-              <Icon size={16} style={{ opacity: active ? 1 : 0.7 }} />
-              {item.label}
-              {badgeVal !== null && <span style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.22)', color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 20, padding: '1px 6px', minWidth: 18, textAlign: 'center' }}>{badgeVal}</span>}
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-        <div
-          onClick={() => setMemberModal({ key: authUser?.initials, name: authUser?.name || '', email: authUser?.email || '', role: authUser?.job_title || '', status: authUser?.status || 'Online' })}
-          style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 6, cursor: 'pointer' }}
-          title="View profile"
-        >
-          <Avatar k={authUser?.initials || 'SO'} size={28} style={{ background: 'rgba(255,255,255,0.2)', color: '#fff' }} />
+    <>
+      {/* Mobile backdrop — tap outside to close */}
+      {isMobile && mobileSidebarOpen && (
+        <div onClick={() => setMobileSidebarOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 199 }} />
+      )}
+      <nav style={{
+        width: 222, minWidth: 222, background: '#8F3030',
+        display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden',
+        zIndex: 200,
+        ...(isMobile ? {
+          position: 'fixed', top: 0, left: 0,
+          transform: mobileSidebarOpen ? 'translateX(0)' : 'translateX(-222px)',
+          transition: 'transform 0.25s ease',
+          boxShadow: mobileSidebarOpen ? '4px 0 24px rgba(0,0,0,0.3)' : 'none',
+        } : {}),
+      }}>
+        {/* ── Sidebar header — logo + company name ── */}
+        <div style={{ padding: '16px 16px 14px', borderBottom: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.15)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{authUser?.name?.split(' ')[0] || 'User'}</div>
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)' }}>Profile</div>
+            <img
+              src={BRAND.logo}
+              alt={BRAND.company}
+              style={{ height: 52, maxWidth: '100%', objectFit: 'contain', objectPosition: 'left' }}
+              onError={e => {
+                e.target.style.display = 'none';
+                e.target.nextSibling.style.display = 'flex';
+              }}
+            />
+            {/* Text fallback (hidden unless logo fails to load) */}
+            <div style={{ display: 'none', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 8, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Syne',sans-serif", fontWeight: 800, fontSize: 12, color: '#fff' }}>TD</div>
+              <div>
+                <div style={{ fontFamily: "'Syne',sans-serif", fontWeight: 700, fontSize: 15, color: '#fff' }}>{BRAND.company}</div>
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 1 }}>{BRAND.subtitle}</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 1, marginTop: 6 }}>{BRAND.subtitle}</div>
           </div>
-          <div onClick={(e) => { e.stopPropagation(); logout(); }} title="Sign out" style={{ cursor: 'pointer', color: 'rgba(255,255,255,0.5)', flexShrink: 0 }}>
-            <LogOut size={14} />
+          {/* Close button — mobile only */}
+          {isMobile && (
+            <button onClick={() => setMobileSidebarOpen(false)}
+              style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', padding: '5px 9px', fontSize: 15, lineHeight: 1, flexShrink: 0, marginLeft: 8, marginTop: 2 }}>
+              ✕
+            </button>
+          )}
+        </div>
+        <div style={{ flex: 1, padding: '10px 8px', overflowY: 'auto' }}>
+          {NAV_ITEMS.filter(item => !item.adminOnly || authUser?.role === 'admin').map((item, i) => {
+            if (item.section) return <div key={i} style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', padding: '10px 8px 6px', fontWeight: 500 }}>{item.section}</div>;
+            const active = view === item.id;
+            const Icon = item.icon;
+            const badgeVal = item.badge === 'camps' ? projects.length : item.badge === 'tasks' ? openTasks : item.badge === 'notifs' ? null : item.badge === 'chat' && unreadChat > 0 ? unreadChat : null;
+            return (
+              <div key={item.id} onClick={() => goNav(item.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', color: active ? '#fff' : 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 1, background: active ? 'rgba(255,255,255,0.18)' : 'transparent', fontWeight: active ? 500 : 400 }}>
+                <Icon size={16} style={{ opacity: active ? 1 : 0.7 }} />
+                {item.label}
+                {badgeVal !== null && <span style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.22)', color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 20, padding: '1px 6px', minWidth: 18, textAlign: 'center' }}>{badgeVal}</span>}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+          <div
+            onClick={() => setMemberModal({ key: authUser?.initials, name: authUser?.name || '', email: authUser?.email || '', role: authUser?.job_title || '', status: authUser?.status || 'Online' })}
+            style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 6, cursor: 'pointer' }}
+            title="View profile"
+          >
+            <Avatar k={authUser?.initials || 'SO'} size={28} style={{ background: 'rgba(255,255,255,0.2)', color: '#fff' }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{authUser?.name?.split(' ')[0] || 'User'}</div>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)' }}>Profile</div>
+            </div>
+            <div onClick={(e) => { e.stopPropagation(); logout(); }} title="Sign out" style={{ cursor: 'pointer', color: 'rgba(255,255,255,0.5)', flexShrink: 0 }}>
+              <LogOut size={14} />
+            </div>
           </div>
         </div>
-      </div>
-    </nav>
+      </nav>
+    </>
   );
 
   /* ═══════ TASK CARD ═══════ */
@@ -685,13 +720,13 @@ export default function App() {
             : <>Here's what's happening across the data team today. No deadlines due this week.</>}
         </p>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2,1fr)' : 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
         <StatCard label="Ongoing Projects" value={activeProjects} delta={activeProjects > 0 ? `${activeProjects} active` : 'None yet'} up={activeProjects > 0} />
         <StatCard label="Open Tasks" value={openTasks} delta={openTasks > 0 ? `${openTasks} in progress` : 'All clear'} up={openTasks === 0} />
         <StatCard label="Completed Tasks" value={doneTasks} delta={doneTasks > 0 ? `${doneTasks} done` : 'None yet'} up={doneTasks > 0} />
         <StatCard label="Team Members" value={Object.keys(members).length} delta="Active" up />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr', gap: 16 }}>
         {/* ── Ongoing Projects — traffic-light progress bar + +/– buttons ── */}
         <Panel title="Ongoing Projects" action="View all →" actionClick={() => goNav('projects')}>
           {projects.length === 0
@@ -787,7 +822,7 @@ export default function App() {
         <div><h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal, marginBottom: 4 }}>Project Management</h2><p style={{ color: '#5A5860', fontSize: 12 }}>Track all projects across the data team.</p></div>
         <div style={{ marginLeft: 'auto' }}><Btn primary sm onClick={() => setProjModal({})}><Plus size={12} /> New Project</Btn></div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2,1fr)', gap: 14 }}>
         {projects.map(p => (
           <div key={p.id} style={{ background: '#fff', border: '1px solid #E2E0E5', borderRadius: 10, padding: 18, borderLeft: `3px solid ${p.color}`, boxShadow: '0 1px 3px rgba(0,0,0,0.04)', position: 'relative' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -1769,8 +1804,10 @@ export default function App() {
             <Btn primary sm onClick={() => setAddMemberModal(true)}><Plus size={12} /> Add Member</Btn>
           </div>
 
+          {/* Table — horizontally scrollable on mobile */}
+          <div style={{ overflowX: 'auto' }}>
           {/* Table header */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.6fr 80px 1.1fr 90px auto', gap: 8, padding: '6px 10px', borderBottom: '2px solid #E2E0E5', fontSize: 10, color: '#918E98', textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.6fr 80px 1.1fr 90px auto', gap: 8, padding: '6px 10px', borderBottom: '2px solid #E2E0E5', fontSize: 10, color: '#918E98', textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600, minWidth: 680 }}>
             <div>Member</div><div>Email</div><div>Role</div><div>Job Title</div><div>Status</div><div style={{ textAlign: 'right' }}>Actions</div>
           </div>
 
@@ -1780,7 +1817,7 @@ export default function App() {
             const isSelf = authUser?.id === u.id;
             const isAdm  = u.role === 'admin';
             return (
-              <div key={u.id} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.6fr 80px 1.1fr 90px auto', gap: 8, padding: '10px 10px', borderBottom: '1px solid #F4F3F5', alignItems: 'center', fontSize: 12 }}>
+              <div key={u.id} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.6fr 80px 1.1fr 90px auto', gap: 8, padding: '10px 10px', borderBottom: '1px solid #F4F3F5', alignItems: 'center', fontSize: 12, minWidth: 680 }}>
 
                 {/* Name + initials avatar */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1850,6 +1887,7 @@ export default function App() {
               </div>
             );
           })}
+          </div>{/* end scrollable table wrapper */}
         </Panel>
       </div>
     );
@@ -2349,11 +2387,25 @@ export default function App() {
       <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
       <Sidebar />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ height: 54, minHeight: 54, background: '#fff', borderBottom: '1px solid #E2E0E5', display: 'flex', alignItems: 'center', gap: 12, padding: '0 20px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
-          <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 700, flex: 1, color: COLORS.charcoal }}>{VTITLES[view]}</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#F4F3F5', border: '1px solid #E2E0E5', borderRadius: 6, padding: '6px 12px', color: '#5A5860', fontSize: 13, minWidth: 200 }}><Search size={13} style={{ opacity: 0.5 }} /> Search tasks, projects...</div>
-          <Btn sm onClick={() => setTaskModal({})}><Plus size={12} /> New Task</Btn>
-          <Btn primary sm onClick={() => setProjModal({})}><Plus size={12} /> New Project</Btn>
+        {/* ── Top header bar ── */}
+        <div style={{ height: 54, minHeight: 54, background: '#fff', borderBottom: '1px solid #E2E0E5', display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 12, padding: isMobile ? '0 12px' : '0 20px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+          {/* Hamburger — mobile only */}
+          {isMobile && (
+            <button onClick={() => setMobileSidebarOpen(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: COLORS.charcoal, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <rect x="2" y="4" width="16" height="2" rx="1" fill="currentColor"/>
+                <rect x="2" y="9" width="16" height="2" rx="1" fill="currentColor"/>
+                <rect x="2" y="14" width="16" height="2" rx="1" fill="currentColor"/>
+              </svg>
+            </button>
+          )}
+          <div style={{ fontFamily: "'Syne',sans-serif", fontSize: isMobile ? 14 : 16, fontWeight: 700, flex: 1, color: COLORS.charcoal, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{VTITLES[view]}</div>
+          {/* Search bar — hidden on mobile */}
+          {!isMobile && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#F4F3F5', border: '1px solid #E2E0E5', borderRadius: 6, padding: '6px 12px', color: '#5A5860', fontSize: 13, minWidth: 200 }}><Search size={13} style={{ opacity: 0.5 }} /> Search tasks, projects...</div>
+          )}
+          <Btn sm onClick={() => setTaskModal({})}><Plus size={12} />{!isMobile && ' New Task'}</Btn>
+          <Btn primary sm onClick={() => setProjModal({})}><Plus size={12} />{!isMobile && ' New Project'}</Btn>
         </div>
         {views[view]}
       </div>

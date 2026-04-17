@@ -107,10 +107,10 @@ export default function Login() {
       fontFamily: "'DM Sans', sans-serif",
     }}>
 
-      {/* ── Left panel — branding ──────────────────────────────── */}
+      {/* ── Left panel — branding (hidden on mobile) ─────────── */}
       <div style={{
         width: 420, background: COLORS.burg,
-        display: 'flex', flexDirection: 'column',
+        display: window.innerWidth < 768 ? 'none' : 'flex', flexDirection: 'column',
         justifyContent: 'center', padding: '60px 48px',
       }}>
         <div style={{ marginBottom: 48 }}>

@@ -12,7 +12,6 @@ const cors       = require('cors');
 const http       = require('http');
 const path       = require('path');
 const helmet     = require('helmet');
-const rateLimit  = require('express-rate-limit');
 const { Server } = require('socket.io');
 const jwt        = require('jsonwebtoken');
 const pool       = require('./db/pool');
@@ -40,17 +39,6 @@ app.use(helmet({
 // ── CORS ──────────────────────────────────────────────────────
 app.use(cors({ origin: ALLOWED_ORIGIN, credentials: true }));
 app.use(express.json());
-
-// ── Rate limiter: login endpoint ──────────────────────────────
-// 10 attempts per 15 minutes per IP — prevents brute-force attacks.
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  message: { error: 'Too many login attempts. Please wait 15 minutes and try again.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.post('/api/auth/login', loginLimiter);
 
 // ── Static files — uploaded avatars ──────────────────────────
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));

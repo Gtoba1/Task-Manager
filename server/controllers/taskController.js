@@ -104,15 +104,21 @@ async function getTasks(req, res) {
 
 // ── POST /api/tasks ───────────────────────────────────────────
 // Create a new task
+const VALID_STATUSES   = ['backlog', 'progress', 'review', 'approved', 'done'];
+const VALID_PRIORITIES = ['l', 'm', 'h'];
+const VALID_DEPTS      = ['bu', 'bg'];
+
 async function createTask(req, res) {
   const {
     title, description, status = 'backlog', priority = 'm',
     dept = 'bu', due_date, assignee_id, project_id, collaborators = []
   } = req.body;
 
-  if (!title) {
-    return res.status(400).json({ error: 'Task title is required.' });
-  }
+  if (!title) return res.status(400).json({ error: 'Task title is required.' });
+  if (!VALID_STATUSES.includes(status))     return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
+  if (!VALID_PRIORITIES.includes(priority)) return res.status(400).json({ error: `Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}` });
+  if (!VALID_DEPTS.includes(dept))          return res.status(400).json({ error: `Invalid dept. Must be one of: ${VALID_DEPTS.join(', ')}` });
+
 
   try {
     // Insert the task
@@ -191,6 +197,10 @@ async function updateTask(req, res) {
     title, description, status, priority,
     dept, due_date, assignee_id, project_id, collaborators
   } = req.body;
+
+  if (status    && !VALID_STATUSES.includes(status))     return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
+  if (priority  && !VALID_PRIORITIES.includes(priority)) return res.status(400).json({ error: `Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}` });
+  if (dept      && !VALID_DEPTS.includes(dept))          return res.status(400).json({ error: `Invalid dept. Must be one of: ${VALID_DEPTS.join(', ')}` });
 
   try {
     // Make sure the task exists

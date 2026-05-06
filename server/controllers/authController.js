@@ -3,9 +3,10 @@
 
 const bcrypt = require('bcrypt');
 const jwt    = require('jsonwebtoken');
-const crypto = require('crypto');   // built into Node — no install needed
+const crypto = require('crypto');
 const pool   = require('../db/pool');
 const { sendEmail, buildEmailHtml } = require('../utils/email');
+const { validatePassword } = require('../utils/passwordValidator');
 
 // ── POST /api/auth/login ──────────────────────────────────────
 // Body: { email, password }
@@ -167,14 +168,11 @@ async function resetPassword(req, res) {
   if (!token || !password) {
     return res.status(400).json({ error: 'Token and new password are required.' });
   }
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters.' });
-  }
 
   try {
-    // Find a valid, unused, non-expired token
+    // Find a valid, unused, non-expired token first so we can validate against the user's name/email
     const result = await pool.query(
-      `SELECT prt.id, prt.user_id, u.name
+      `SELECT prt.id, prt.user_id, u.name, u.email
        FROM password_reset_tokens prt
        JOIN users u ON u.id = prt.user_id
        WHERE prt.token = $1
@@ -189,7 +187,12 @@ async function resetPassword(req, res) {
       });
     }
 
-    const { id: tokenId, user_id, name } = result.rows[0];
+    const { id: tokenId, user_id, name, email } = result.rows[0];
+
+    const pwErrors = validatePassword(password, { name, email });
+    if (pwErrors.length > 0) {
+      return res.status(400).json({ error: pwErrors[0] });
+    }
 
     const hash = await bcrypt.hash(password, 10);
 

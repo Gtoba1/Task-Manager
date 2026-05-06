@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { resetPassword as apiResetPassword } from './api';
+import { checkRules, validatePassword } from './passwordValidator';
 
 const LOGO_PATH = '/img/logo-white.png';
 const BURG      = '#8B1A2B';
@@ -28,11 +29,15 @@ export default function ResetPasswordPage({ token }) {
     fontFamily: "'DM Sans',sans-serif", boxSizing: 'border-box',
   };
 
+  const rules = checkRules(password);
+  const allPass = rules.every(r => r.pass);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    if (password.length < 8) return setError('Password must be at least 8 characters.');
+    const errors = validatePassword(password);
+    if (errors.length > 0) return setError(errors[0]);
     if (password !== confirm) return setError('Passwords do not match. Please try again.');
 
     setLoading(true);
@@ -76,7 +81,7 @@ export default function ResetPasswordPage({ token }) {
           Choose a new<br />password.
         </h2>
         <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginTop: 12, lineHeight: 1.6 }}>
-          Pick something secure — at least 8 characters. You'll use it to sign in from now on.
+          Pick something strong — at least 12 characters with uppercase, lowercase, a number, and a special character.
         </p>
       </div>
 
@@ -135,7 +140,7 @@ export default function ResetPasswordPage({ token }) {
                       type={showPass ? 'text' : 'password'}
                       value={password}
                       onChange={e => { setPassword(e.target.value); setError(''); }}
-                      placeholder="Min. 8 characters"
+                      placeholder="Min. 12 characters"
                       required autoFocus
                       style={inputStyle}
                     />
@@ -145,6 +150,17 @@ export default function ResetPasswordPage({ token }) {
                       {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
+                  {/* Live requirements checklist */}
+                  {password.length > 0 && (
+                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {rules.map(({ rule, pass }) => (
+                        <div key={rule} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: pass ? '#22A55A' : '#848688' }}>
+                          <span style={{ fontSize: 10 }}>{pass ? '✓' : '○'}</span>
+                          {rule}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Confirm password */}

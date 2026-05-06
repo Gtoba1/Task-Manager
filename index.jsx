@@ -4,6 +4,7 @@ import { LayoutDashboard, FolderKanban, ListTodo, Users, CalendarDays, GitBranch
 import { useAuth } from './src/AuthContext';
 import { useSocket, showDesktopNotification } from './src/SocketContext';
 import * as API from './src/api';
+import { checkRules, validatePassword } from './src/passwordValidator';
 
 /* ═══════════════════════════════════════════════════════════════
    ★  EASY CUSTOMISATION — non-developers start here
@@ -2161,11 +2162,18 @@ export default function App() {
       }
     };
 
+    const selfUser   = rawUsers.find(u => u.initials === memberModal?.key);
+    const passRules  = isSelf ? checkRules(newPass, { name: selfUser?.name, email: selfUser?.email }) : [];
+    const passAllOk  = !isSelf || passRules.every(r => r.pass);
+
     const handleSave = () => {
       if (!form.name) return;
-      if (showPassSection) {
-        if (newPass && newPass.length < 8) return setPassError('Password must be at least 8 characters.');
-        if (newPass !== confirmPass)        return setPassError('Passwords do not match.');
+      if (showPassSection && newPass) {
+        if (isSelf) {
+          const errors = validatePassword(newPass, { name: selfUser?.name, email: selfUser?.email });
+          if (errors.length > 0) return setPassError(errors[0]);
+        }
+        if (newPass !== confirmPass) return setPassError('Passwords do not match.');
       }
       const payload = { ...form };
       if (showPassSection && newPass) payload.password = newPass;
@@ -2246,7 +2254,7 @@ export default function App() {
                   <input
                     type="password" style={inputStyle} value={newPass}
                     onChange={e => { setNewPass(e.target.value); setPassError(''); }}
-                    placeholder="Min. 8 characters" autoFocus
+                    placeholder={isSelf ? 'Min. 12 characters' : 'Set a password'} autoFocus
                   />
                 </FormField>
                 <FormField label="Confirm New Password">
@@ -2256,6 +2264,16 @@ export default function App() {
                     placeholder="Type again to confirm"
                   />
                 </FormField>
+                {/* Live requirements checklist — only shown when user changes their own password */}
+                {isSelf && newPass.length > 0 && (
+                  <div style={{ gridColumn: '1/-1', display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+                    {passRules.map(({ rule, pass }) => (
+                      <div key={rule} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: pass ? '#22A55A' : '#848688', width: 'calc(50% - 8px)' }}>
+                        <span style={{ fontSize: 10 }}>{pass ? '✓' : '○'}</span>{rule}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {passError && (
                   <div style={{ gridColumn: '1/-1', padding: '8px 12px', borderRadius: 6, background: '#FCEAEA', border: '1px solid #F5C6C6', fontSize: 12, color: '#D63B3B' }}>
                     {passError}

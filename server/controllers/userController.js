@@ -4,6 +4,7 @@
 const bcrypt = require('bcrypt');
 const pool   = require('../db/pool');
 const { sendEmail, buildEmailHtml } = require('../utils/email');
+const { validatePassword } = require('../utils/passwordValidator');
 
 // ── GET /api/users ────────────────────────────────────────────
 // Returns all users — used for dropdowns and the team view
@@ -138,6 +139,18 @@ async function updateUser(req, res) {
 
     // ── Build the update — only overwrite fields that were sent ─
     if (password) {
+      // Enforce password rules only when the user is changing their own password.
+      // Admin-set passwords (resetting for someone else) skip these rules.
+      const isSelfUpdate = req.user.id === parseInt(id);
+      if (isSelfUpdate) {
+        const userRow = await pool.query('SELECT name, email FROM users WHERE id = $1', [id]);
+        const { name: uName, email: uEmail } = userRow.rows[0] || {};
+        const pwErrors = validatePassword(password, { name: uName, email: uEmail });
+        if (pwErrors.length > 0) {
+          return res.status(400).json({ error: pwErrors[0] });
+        }
+      }
+
       const hash = await bcrypt.hash(password, 10);
       await pool.query(
         `UPDATE users SET

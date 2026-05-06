@@ -15,6 +15,7 @@ const helmet     = require('helmet');
 const { Server } = require('socket.io');
 const jwt        = require('jsonwebtoken');
 const pool       = require('./db/pool');
+const ioSingleton = require('./io');
 
 const app    = express();
 const server = http.createServer(app); // wrap Express in a plain HTTP server for Socket.io
@@ -27,6 +28,7 @@ const ALLOWED_ORIGIN = process.env.APP_URL || 'http://localhost:5173';
 const io = new Server(server, {
   cors: { origin: ALLOWED_ORIGIN, credentials: true },
 });
+ioSingleton.setIO(io);
 
 // ── Security headers (helmet) ─────────────────────────────────
 app.use(helmet({
@@ -113,6 +115,9 @@ const onlineUsers = new Map();
 io.on('connection', (socket) => {
   const u = socket.user;
   console.log(`💬  Chat connected: ${u.name}`);
+
+  // ── Personal room — used to send notifications to a specific user ──
+  socket.join(`user:${u.id}`);
 
   // ── Presence: add this socket to the user's active set ──────
   if (!onlineUsers.has(u.id)) onlineUsers.set(u.id, new Set());

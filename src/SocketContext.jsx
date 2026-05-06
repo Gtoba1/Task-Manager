@@ -52,6 +52,7 @@ export function SocketProvider({ user, children }) {
     // When another user triggers notify:broadcast, this fires for everyone else
     socket.on('notify:receive', ({ title, body, icon }) => {
       showDesktopNotification(title, body, icon);
+      window.dispatchEvent(new CustomEvent('app:notify', { detail: { title, body } }));
     });
 
     // ── Request browser notification permission ─────────────────

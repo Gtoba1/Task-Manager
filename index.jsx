@@ -263,6 +263,7 @@ export default function App() {
   const [onlineUserIds, setOnlineUserIds]  = useState(new Set()); // real-time presence
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [windowWidth, setWindowWidth]     = useState(window.innerWidth);
+  const [toasts, setToasts]               = useState([]);
 
   // ── Load all data from the API on mount ────────────────────
   const loadData = useCallback(async () => {
@@ -316,6 +317,17 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
   const isMobile = windowWidth < 768;
+
+  // ── In-app toast notifications ────────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      const toast = { id: Date.now(), ...e.detail };
+      setToasts(t => [...t, toast]);
+      setTimeout(() => setToasts(t => t.filter(x => x.id !== toast.id)), 5000);
+    };
+    window.addEventListener('app:notify', handler);
+    return () => window.removeEventListener('app:notify', handler);
+  }, []);
 
   // ── Global chat listener — runs when NOT on the chat view ────
   // Increments the unread badge and fires a desktop notification
@@ -2415,6 +2427,21 @@ export default function App() {
       {addMemberModal && <AddMemberForm />}
       {confirmModal && <ConfirmModalComp />}
       {resetPassModal && <ResetPassModal />}
+
+      {/* ── In-app toast notifications ── */}
+      <div style={{ position: 'fixed', bottom: 20, right: 20, zIndex: 9999, display: 'flex', flexDirection: 'column', gap: 8, pointerEvents: 'none' }}>
+        {toasts.map(t => (
+          <div key={t.id} style={{ background: '#2A2829', color: '#fff', padding: '12px 16px', borderRadius: 10, minWidth: 260, maxWidth: 320, boxShadow: '0 4px 16px rgba(0,0,0,0.25)', display: 'flex', alignItems: 'flex-start', gap: 10, pointerEvents: 'all' }}>
+            <div style={{ fontSize: 18, flexShrink: 0 }}>🔔</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{t.title}</div>
+              <div style={{ fontSize: 12, opacity: 0.75, lineHeight: 1.4 }}>{t.body}</div>
+            </div>
+            <button onClick={() => setToasts(ts => ts.filter(x => x.id !== t.id))}
+              style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 16, opacity: 0.5, padding: 0, flexShrink: 0, lineHeight: 1 }}>×</button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

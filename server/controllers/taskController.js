@@ -5,8 +5,8 @@
 
 const pool            = require('../db/pool');
 const { logActivity } = require('./commentController');
-// Issue #2: email notifications when a task is assigned or reassigned
 const { sendEmail, buildEmailHtml } = require('../utils/email');
+const { emitToUser }  = require('../io');
 
 // ── Helper: fetch a single task with all its details ─────────
 async function fetchTask(taskId) {
@@ -144,7 +144,14 @@ async function createTask(req, res) {
     const task = await fetchTask(taskId);
     res.status(201).json({ task });
 
-    // Issue #2: notify the assignee by email.
+    // In-app notification + real-time socket emit for the assignee
+    if (assignee_id && assignee_id !== req.user.id) {
+      const msg = `${req.user.name} assigned you a task: "${title}"`;
+      await pool.query('INSERT INTO notifications (user_id, message) VALUES ($1,$2)', [assignee_id, msg]);
+      emitToUser(assignee_id, 'notify:receive', { title: 'New task assigned to you', body: msg });
+    }
+
+    // Notify the assignee by email.
     // Wrapped in its own try-catch so email failures never trigger the outer
     // catch, which would attempt a second res.json() on an already-sent response.
     try {
@@ -242,7 +249,16 @@ async function updateTask(req, res) {
     const task = await fetchTask(id);
     res.json({ task });
 
-    // Issue #2: notify the new assignee if the assignment changed.
+    // In-app notification + socket emit when assignee changes
+    const oldAssigneeId = existing.rows[0].assignee_id;
+    if (assignee_id && assignee_id !== oldAssigneeId && assignee_id !== req.user.id) {
+      const taskTitle = title || existing.rows[0].title;
+      const msg = `${req.user.name} assigned you a task: "${taskTitle}"`;
+      await pool.query('INSERT INTO notifications (user_id, message) VALUES ($1,$2)', [assignee_id, msg]);
+      emitToUser(assignee_id, 'notify:receive', { title: 'Task assigned to you', body: msg });
+    }
+
+    // Notify the new assignee by email if the assignment changed.
     // Inner try-catch prevents email failures from hitting the outer catch
     // (which would try to send a second response on an already-sent one).
     try {

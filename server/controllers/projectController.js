@@ -4,8 +4,8 @@
 // - Members can only see projects they are assigned to
 
 const pool = require('../db/pool');
-// Issue #2: email notifications when members are added to a project
 const { sendEmail, buildEmailHtml } = require('../utils/email');
+const { emitToUser } = require('../io');
 
 // ── Helper: fetch a single project with members and tags ──────
 // Uses subqueries to avoid the DISTINCT + JSON_AGG incompatibility in PostgreSQL
@@ -125,7 +125,15 @@ async function createProject(req, res) {
     const project = await fetchProject(projectId);
     res.status(201).json({ project });
 
-    // Issue #2: notify each added member by email (except the creator).
+    // In-app notification + socket emit for each added member (except creator)
+    const newMemberIds = allMembers.filter(id => id !== req.user.id);
+    for (const userId of newMemberIds) {
+      const msg = `${req.user.name} added you to a project: "${name}"`;
+      await pool.query('INSERT INTO notifications (user_id, message) VALUES ($1,$2)', [userId, msg]);
+      emitToUser(userId, 'notify:receive', { title: 'Added to a project', body: msg });
+    }
+
+    // Notify each added member by email (except the creator).
     // Inner try-catch isolates email failures from the outer catch so we never
     // attempt a second res.json() on an already-sent response.
     try {

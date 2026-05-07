@@ -52,6 +52,10 @@ export const deleteComment  = (taskId, commentId)   => api.delete(`/tasks/${task
 // ── Chat ──────────────────────────────────────────────────────
 export const getChatHistory = () => api.get('/chat');
 
+// ── Direct Messages ───────────────────────────────────────────
+export const getDMConversation = (userId) => api.get(`/dm/${userId}`);
+export const getDMUnreadCounts = ()        => api.get('/dm/unread');
+
 // ── Notifications ─────────────────────────────────────────────
 export const getNotifications  = ()   => api.get('/notifications');
 export const markOneRead       = (id) => api.patch(`/notifications/${id}/read`);

@@ -51,6 +51,7 @@ app.use('/api/users',         require('./routes/users'));
 app.use('/api/projects',      require('./routes/projects'));
 app.use('/api/tasks',         require('./routes/tasks'));
 app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/dm',            require('./routes/dm'));
 
 // ── Auto-create chat_last_read table if it doesn't exist ─────
 // Tracks the last message each user has seen — used for read receipts.
@@ -193,6 +194,30 @@ io.on('connection', (socket) => {
       io.emit('chat:read_status', result.rows);
     } catch (err) {
       console.error('chat:read error:', err.message);
+    }
+  });
+
+  // ── Send a direct message ─────────────────────────────────────
+  // Client emits: { to_user_id: number, content: string }
+  // Server saves it and emits 'dm:message' to both sender and receiver rooms.
+  socket.on('dm:send', async ({ to_user_id, content }) => {
+    if (!content?.trim() || !to_user_id) return;
+    try {
+      const result = await pool.query(
+        `INSERT INTO direct_messages (sender_id, receiver_id, content)
+         VALUES ($1, $2, $3)
+         RETURNING id, sender_id, receiver_id, content, is_read, created_at`,
+        [u.id, to_user_id, content.trim()]
+      );
+      const msg = {
+        ...result.rows[0],
+        sender_name:     u.name,
+        sender_initials: u.initials,
+      };
+      io.to(`user:${u.id}`).emit('dm:message', msg);
+      io.to(`user:${to_user_id}`).emit('dm:message', msg);
+    } catch (err) {
+      console.error('dm:send error:', err.message);
     }
   });
 

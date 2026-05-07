@@ -261,6 +261,7 @@ export default function App() {
   const [resetPassModal, setResetPassModal] = useState(null); // { userId, userName, initials }
   const [dragId, setDragId]               = useState(null);
   const [unreadChat, setUnreadChat]        = useState(0);
+  const [unreadDM, setUnreadDM]            = useState({}); // { [senderId]: count }
   const [unreadNotifs, setUnreadNotifs]    = useState(0);
   const [onlineUserIds, setOnlineUserIds]  = useState(new Set()); // real-time presence
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -319,6 +320,13 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  // ── Load initial unread DM counts ──────────────────────────
+  useEffect(() => {
+    API.getDMUnreadCounts()
+      .then(res => setUnreadDM(res.data.counts || {}))
+      .catch(() => {});
+  }, []);
+
   // ── Window resize — track mobile breakpoint ────────────────
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -352,6 +360,20 @@ export default function App() {
     };
     socket.on('chat:message', handler);
     return () => socket.off('chat:message', handler);
+  }, [socket, view, authUser?.id]);
+
+  // ── Global DM listener — runs when NOT on the chat view ─────
+  // ChatView handles its own dm:message events while mounted.
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (msg) => {
+      if (view !== 'chat' && msg.receiver_id === authUser?.id) {
+        setUnreadDM(prev => ({ ...prev, [msg.sender_id]: (prev[msg.sender_id] || 0) + 1 }));
+        showDesktopNotification(`DM from ${msg.sender_name}`, msg.content);
+      }
+    };
+    socket.on('dm:message', handler);
+    return () => socket.off('dm:message', handler);
   }, [socket, view, authUser?.id]);
 
   // ── Presence listener — tracks who is actually online right now ─
@@ -626,7 +648,8 @@ export default function App() {
             if (item.section) return <div key={i} style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', padding: '10px 8px 6px', fontWeight: 500 }}>{item.section}</div>;
             const active = view === item.id;
             const Icon = item.icon;
-            const badgeVal = item.badge === 'camps' ? projects.length : item.badge === 'tasks' ? openTasks : item.badge === 'notifs' && unreadNotifs > 0 ? unreadNotifs : item.badge === 'chat' && unreadChat > 0 ? unreadChat : null;
+            const totalChatUnread = unreadChat + Object.values(unreadDM).reduce((s, n) => s + n, 0);
+            const badgeVal = item.badge === 'camps' ? projects.length : item.badge === 'tasks' ? openTasks : item.badge === 'notifs' && unreadNotifs > 0 ? unreadNotifs : item.badge === 'chat' && totalChatUnread > 0 ? totalChatUnread : null;
             return (
               <div key={item.id} onClick={() => goNav(item.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', color: active ? '#fff' : 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 1, background: active ? 'rgba(255,255,255,0.18)' : 'transparent', fontWeight: active ? 500 : 400 }}>
                 <Icon size={16} style={{ opacity: active ? 1 : 0.7 }} />
@@ -1599,85 +1622,88 @@ export default function App() {
   // Messages are saved to the database so history is preserved across sessions.
   // Desktop notifications fire when a new message arrives and this tab isn't active.
   const ChatView = () => {
-    const [messages, setMessages]     = useState([]);
-    const [text, setText]             = useState('');
-    const [loading, setLoading]       = useState(true);
-    const [readStatus, setReadStatus] = useState([]); // [{ user_id, initials, last_message_id }]
-    // Issue #6: track load error so the user sees a visible retry button
-    // instead of a silent empty state when the server is waking from sleep.
-    const [chatError, setChatError]   = useState(null);
-    const bottomRef                   = useRef(null); // used to auto-scroll to latest message
-    const textareaRef = useRef(null);
-    const [mentionPick, setMentionPick] = useState(null); // null | { query: string, anchor: number }
+    // ── Group chat state ─────────────────────────────────────────
+    const [messages, setMessages]       = useState([]);
+    const [text, setText]               = useState('');
+    const [loading, setLoading]         = useState(true);
+    const [readStatus, setReadStatus]   = useState([]);
+    const [chatError, setChatError]     = useState(null);
+    const bottomRef                     = useRef(null);
+    const textareaRef                   = useRef(null);
+    const [mentionPick, setMentionPick] = useState(null);
 
-    // Returns the list of OTHER users who have read message `msgId`
+    // ── DM state ─────────────────────────────────────────────────
+    const [activeDM, setActiveDM]       = useState(null); // null | { userId, name, initials }
+    const [mobileShowConv, setMobileShowConv] = useState(false); // mobile: show right panel
+    const [dmMessages, setDmMessages] = useState([]);
+    const [dmText, setDmText]         = useState('');
+    const [dmLoading, setDmLoading]   = useState(false);
+    const [dmError, setDmError]       = useState(null);
+    const dmBottomRef                 = useRef(null);
+    const dmTextareaRef               = useRef(null);
+
+    // ── Shared helpers ───────────────────────────────────────────
+    const fmt     = iso => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const fmtDate = iso => new Date(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+
+    const dateSeparated = (msgs, idKey = 'id') => msgs.reduce((acc, msg, i) => {
+      const day = fmtDate(msg.created_at);
+      if (i === 0 || fmtDate(msgs[i - 1].created_at) !== day) acc.push({ type: 'date', label: day });
+      acc.push({ type: 'msg', ...msg });
+      return acc;
+    }, []);
+
+    const renderContent = (content, own) => {
+      const parts = content.split(/(@\w+)/g);
+      const firstNames = new Set(rawUsers.map(u => u.name.split(' ')[0].toLowerCase()));
+      return parts.map((part, i) => {
+        if (part.startsWith('@') && firstNames.has(part.slice(1).toLowerCase())) {
+          return <span key={i} style={{ background: own ? 'rgba(255,255,255,0.2)' : COLORS.burgDim, color: own ? '#fff' : COLORS.burg, borderRadius: 4, padding: '0 3px', fontWeight: 600 }}>{part}</span>;
+        }
+        return part;
+      });
+    };
+
+    // ── Group chat: load + sockets ───────────────────────────────
     const getReaders = (msgId) =>
       readStatus.filter(r => r.user_id !== authUser?.id && r.last_message_id >= msgId);
 
-    // ── Load recent history — extracted so the Retry button can call it again ──
-    // Issue #6 fix: on failure set chatError state (visible in UI) instead of
-    // silently swallowing the error. This handles the Render free-tier cold-start
-    // delay where the server may be asleep when the user first logs in.
     const loadHistory = () => {
       setLoading(true);
       setChatError(null);
       API.getChatHistory()
-        .then(res => {
-          setMessages(res.data.messages || []);
-          setReadStatus(res.data.read_status || []);
-        })
-        .catch(err => {
-          console.error('Chat history error:', err.message);
-          setChatError('Could not load messages. The server may be waking up — please try again in a moment.');
-        })
+        .then(res => { setMessages(res.data.messages || []); setReadStatus(res.data.read_status || []); })
+        .catch(() => setChatError('Could not load messages. The server may be waking up — please try again in a moment.'))
         .finally(() => setLoading(false));
-
-      // Clear the unread badge while the chat view is open
       setUnreadChat(0);
     };
 
-    // ── Load recent history on mount ───────────────────────────
-    useEffect(() => {
-      loadHistory();
-    }, []);
+    useEffect(() => { loadHistory(); }, []);
 
-    // ── Listen for new messages over the socket ─────────────────
     useEffect(() => {
       if (!socket) return;
       const handler = (msg) => {
         setMessages(prev => [...prev, msg]);
-        // If the user is looking at a different view, increment the badge
-        // and fire a desktop notification for messages from others
-        if (msg.user_id !== authUser?.id) {
-          showDesktopNotification(
-            `${msg.name} in Team Chat`,
-            msg.content,
-          );
-        }
+        if (msg.user_id !== authUser?.id) showDesktopNotification(`${msg.name} in Team Chat`, msg.content);
       };
       socket.on('chat:message', handler);
       return () => socket.off('chat:message', handler);
     }, [socket]);
 
-    // ── Listen for read-receipt updates ─────────────────────────
     useEffect(() => {
       if (!socket) return;
       socket.on('chat:read_status', setReadStatus);
       return () => socket.off('chat:read_status', setReadStatus);
     }, [socket]);
 
-    // ── Auto-mark messages as read while this view is open ──────
-    // Fires whenever the message list changes (initial load + new arrivals)
     useEffect(() => {
       const lastId = messages.at?.(-1)?.id ?? messages[messages.length - 1]?.id;
       if (lastId && socket) socket.emit('chat:read', { last_message_id: lastId });
     }, [messages, socket]);
 
-    // ── Auto-scroll to the bottom when messages change ──────────
-    useEffect(() => {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
+    useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
+    // ── Group chat: @mention + send ──────────────────────────────
     const handleSend = () => {
       if (mentionPick && mentionList.length > 0) { insertMention(mentionList[0]); return; }
       if (!text.trim() || !socket) return;
@@ -1694,10 +1720,7 @@ export default function App() {
       const atIdx  = before.lastIndexOf('@');
       if (atIdx >= 0) {
         const query = before.slice(atIdx + 1);
-        if (!query.includes(' ') && query.length <= 20) {
-          setMentionPick({ query, anchor: atIdx });
-          return;
-        }
+        if (!query.includes(' ') && query.length <= 20) { setMentionPick({ query, anchor: atIdx }); return; }
       }
       setMentionPick(null);
     };
@@ -1716,182 +1739,300 @@ export default function App() {
       ? rawUsers.filter(u => u.name.split(' ')[0].toLowerCase().startsWith(mentionPick.query.toLowerCase()))
       : [];
 
-    const fmt = iso => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    const fmtDate = iso => new Date(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-
-    // Group messages — show a date separator when the day changes
-    const grouped = messages.reduce((acc, msg, i) => {
-      const day = fmtDate(msg.created_at);
-      if (i === 0 || fmtDate(messages[i - 1].created_at) !== day) acc.push({ type: 'date', label: day });
-      acc.push({ type: 'msg', ...msg });
-      return acc;
-    }, []);
-
-    const isOwn = (msg) => msg.user_id === authUser?.id;
-
-    const renderContent = (content, own) => {
-      const parts = content.split(/(@\w+)/g);
-      const firstNames = new Set(rawUsers.map(u => u.name.split(' ')[0].toLowerCase()));
-      return parts.map((part, i) => {
-        if (part.startsWith('@') && firstNames.has(part.slice(1).toLowerCase())) {
-          return (
-            <span key={i} style={{
-              background: own ? 'rgba(255,255,255,0.2)' : COLORS.burgDim,
-              color: own ? '#fff' : COLORS.burg,
-              borderRadius: 4, padding: '0 3px', fontWeight: 600,
-            }}>{part}</span>
-          );
-        }
-        return part;
-      });
+    // ── DM: open conversation ────────────────────────────────────
+    const openDM = (user) => {
+      setActiveDM({ userId: user.id, name: user.name, initials: user.initials });
+      setMobileShowConv(true);
+      setUnreadDM(prev => ({ ...prev, [user.id]: 0 }));
+      setDmMessages([]);
+      setDmLoading(true);
+      setDmError(null);
+      API.getDMConversation(user.id)
+        .then(res => setDmMessages(res.data.messages || []))
+        .catch(() => setDmError('Could not load messages. Try again.'))
+        .finally(() => setDmLoading(false));
     };
 
-    return (
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    // ── DM: socket listener ──────────────────────────────────────
+    useEffect(() => {
+      if (!socket) return;
+      const handler = (msg) => {
+        const myId = authUser?.id;
+        const isActive = activeDM && (
+          (msg.sender_id === activeDM.userId && msg.receiver_id === myId) ||
+          (msg.sender_id === myId && msg.receiver_id === activeDM.userId)
+        );
+        if (isActive) {
+          setDmMessages(prev => [...prev, msg]);
+        } else if (msg.receiver_id === myId) {
+          setUnreadDM(prev => ({ ...prev, [msg.sender_id]: (prev[msg.sender_id] || 0) + 1 }));
+          showDesktopNotification(`DM from ${msg.sender_name}`, msg.content);
+        }
+      };
+      socket.on('dm:message', handler);
+      return () => socket.off('dm:message', handler);
+    }, [socket, activeDM, authUser?.id]);
 
-        {/* ── Room header ── */}
-        <div style={{ padding: '12px 20px', borderBottom: '1px solid #E2E0E5', display: 'flex', alignItems: 'center', gap: 10, background: '#fff' }}>
-          <div style={{ width: 34, height: 34, borderRadius: 10, background: COLORS.burgDim, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <MessageSquare size={16} color={COLORS.burg} />
+    useEffect(() => { dmBottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [dmMessages]);
+
+    const handleDMSend = () => {
+      if (!dmText.trim() || !socket || !activeDM) return;
+      socket.emit('dm:send', { to_user_id: activeDM.userId, content: dmText.trim() });
+      setDmText('');
+      setTimeout(() => dmTextareaRef.current?.focus(), 0);
+    };
+
+    const dmIsOwn = (msg) => msg.sender_id === authUser?.id;
+
+    // ── Reusable input row ───────────────────────────────────────
+    const SendBar = ({ value, onChange, onKeyDown, onSend, placeholder, canSend }) => (
+      <div style={{ padding: '12px 20px', borderTop: '1px solid #E2E0E5', background: '#fff' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+          <Avatar k={authUser?.initials || 'SO'} size={32} style={{ flexShrink: 0, marginBottom: 1 }} />
+          <div style={{ flex: 1 }}>
+            <textarea value={value} onChange={onChange} onKeyDown={onKeyDown} placeholder={placeholder} rows={2}
+              style={{ ...inputStyle, resize: 'none', fontSize: 13, padding: '9px 12px', width: '100%', boxSizing: 'border-box' }} />
           </div>
-          <div>
-            <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 14, fontWeight: 700, color: COLORS.charcoal }}>Data Team</div>
-            <div style={{ fontSize: 11, color: '#918E98' }}>{Object.keys(members).length} members · team-wide channel</div>
+          <button onClick={onSend} disabled={!canSend} title="Send"
+            style={{ width: 38, height: 38, borderRadius: 10, flexShrink: 0, marginBottom: 1, background: canSend ? COLORS.burg : '#E2E0E5', border: 'none', cursor: canSend ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s' }}>
+            <Send size={16} color={canSend ? '#fff' : '#C4C2C8'} />
+          </button>
+        </div>
+      </div>
+    );
+
+    // ── Bubble renderer ──────────────────────────────────────────
+    const Bubble = ({ item, own, showName, content, readers }) => (
+      <div style={{ display: 'flex', gap: 9, alignItems: 'flex-end', flexDirection: own ? 'row-reverse' : 'row', marginBottom: 6 }}>
+        {!own && <Avatar k={item.initials || item.sender_initials} size={28} style={{ flexShrink: 0 }} />}
+        <div style={{ maxWidth: '68%' }}>
+          {showName && <div style={{ fontSize: 11, color: '#918E98', marginBottom: 3, marginLeft: 4 }}>{item.name || item.sender_name}</div>}
+          <div style={{ padding: '9px 13px', borderRadius: own ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background: own ? COLORS.burg : '#F4F3F5', color: own ? '#fff' : '#2A2829', fontSize: 13, lineHeight: 1.5, boxShadow: '0 1px 2px rgba(0,0,0,0.06)' }}>
+            {content}
           </div>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-            {Object.keys(members).slice(0, 5).map(k => <Avatar key={k} k={k} size={24} />)}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3, justifyContent: own ? 'flex-end' : 'flex-start', marginLeft: own ? 0 : 4 }}>
+            <span style={{ fontSize: 10, color: '#C4C2C8' }}>{fmt(item.created_at)}</span>
+            {own && readers !== undefined && (readers.length > 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <span style={{ fontSize: 9, color: '#22A55A', fontWeight: 500 }}>Seen</span>
+                {readers.map(r => <Avatar key={r.user_id} k={r.initials} size={13} title={`Read by ${MEMBER_NAMES[r.initials] || r.initials}`} style={{ border: '1px solid #fff' }} />)}
+              </div>
+            ) : <span style={{ fontSize: 9, color: '#C4C2C8' }}>✓ Sent</span>)}
+            {own && readers === undefined && (
+              <span style={{ fontSize: 9, color: item.is_read ? '#22A55A' : '#C4C2C8' }}>{item.is_read ? '✓✓ Read' : '✓ Sent'}</span>
+            )}
           </div>
         </div>
+      </div>
+    );
 
-        {/* ── Message list ── */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {loading ? (
-            <div style={{ margin: 'auto', color: '#C4C2C8', fontSize: 13 }}>Loading messages…</div>
-          ) : chatError ? (
-            // Issue #6 fix: visible error + retry button instead of silent empty state
-            <div style={{ margin: 'auto', textAlign: 'center', color: '#918E98' }}>
-              <AlertCircle size={32} style={{ opacity: 0.4, marginBottom: 8, color: COLORS.amber }} />
-              <div style={{ fontSize: 13, marginBottom: 12, maxWidth: 280, lineHeight: 1.5 }}>{chatError}</div>
-              <button onClick={loadHistory} style={{ fontSize: 12, padding: '6px 16px', borderRadius: 6, border: `1px solid ${COLORS.burg}`, background: 'transparent', color: COLORS.burg, cursor: 'pointer' }}>Retry</button>
+    return (
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+
+        {/* ── Left panel: conversation list ── */}
+        {(!isMobile || !mobileShowConv) && (
+          <div style={{ width: isMobile ? '100%' : 220, borderRight: isMobile ? 'none' : '1px solid #E2E0E5', display: 'flex', flexDirection: 'column', background: '#FAFAF9', flexShrink: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 14px 8px', fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: COLORS.charcoal }}>Messages</div>
+
+            {/* Group channel */}
+            <div onClick={() => { setActiveDM(null); setMobileShowConv(true); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', margin: '0 6px 2px', borderRadius: 8, cursor: 'pointer', background: !activeDM ? COLORS.burgDim : 'transparent' }}
+              onMouseEnter={e => { if (activeDM) e.currentTarget.style.background = '#F4F3F5'; }}
+              onMouseLeave={e => { if (activeDM) e.currentTarget.style.background = 'transparent'; }}
+            >
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: !activeDM ? COLORS.burg : '#E2E0E5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <MessageSquare size={13} color={!activeDM ? '#fff' : '#918E98'} />
+              </div>
+              <div style={{ flex: 1, fontSize: 13, fontWeight: !activeDM ? 700 : 500, color: !activeDM ? COLORS.burg : COLORS.charcoal, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}># Data Team</div>
+              {unreadChat > 0 && <span style={{ background: COLORS.burg, color: '#fff', borderRadius: 10, fontSize: 10, fontWeight: 700, padding: '1px 6px', minWidth: 18, textAlign: 'center' }}>{unreadChat}</span>}
             </div>
-          ) : messages.length === 0 ? (
-            <div style={{ margin: 'auto', textAlign: 'center', color: '#C4C2C8' }}>
-              <MessageSquare size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
-              <div style={{ fontSize: 13 }}>No messages yet — say hello 👋</div>
+
+            {/* DMs section */}
+            <div style={{ padding: '12px 14px 4px', fontSize: 10, color: '#C4C2C8', textTransform: 'uppercase', letterSpacing: 0.6 }}>Direct Messages</div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {rawUsers.filter(u => u.id !== authUser?.id).map(u => {
+                const unread   = unreadDM[u.id] || 0;
+                const isActive = activeDM?.userId === u.id;
+                return (
+                  <div key={u.id} onClick={() => openDM(u)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', margin: '0 6px 2px', borderRadius: 8, cursor: 'pointer', background: isActive ? COLORS.burgDim : 'transparent' }}
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = '#F4F3F5'; }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <div style={{ position: 'relative', flexShrink: 0 }}>
+                      <Avatar k={u.initials} size={27} />
+                      {onlineUserIds.has(u.id) && <div style={{ position: 'absolute', bottom: 0, right: 0, width: 8, height: 8, borderRadius: '50%', background: COLORS.green, border: '2px solid #FAFAF9' }} />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: unread > 0 ? 700 : 500, color: isActive ? COLORS.burg : COLORS.charcoal, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {u.name.split(' ')[0]}
+                      </div>
+                    </div>
+                    {unread > 0 && <span style={{ background: COLORS.burg, color: '#fff', borderRadius: 10, fontSize: 10, fontWeight: 700, padding: '1px 6px', minWidth: 18, textAlign: 'center', flexShrink: 0 }}>{unread}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Right panel ── */}
+        {(!isMobile || mobileShowConv) && (
+          !activeDM ? (
+            /* ── Group chat ── */
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ padding: '12px 20px', borderBottom: '1px solid #E2E0E5', display: 'flex', alignItems: 'center', gap: 10, background: '#fff' }}>
+                {isMobile && (
+                  <button onClick={() => setMobileShowConv(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.burg, padding: '0 4px 0 0', display: 'flex', alignItems: 'center' }}>
+                    <ChevronLeft size={20} />
+                  </button>
+                )}
+                <div style={{ width: 34, height: 34, borderRadius: 10, background: COLORS.burgDim, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <MessageSquare size={16} color={COLORS.burg} />
+                </div>
+                <div>
+                  <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 14, fontWeight: 700, color: COLORS.charcoal }}>Data Team</div>
+                  <div style={{ fontSize: 11, color: '#918E98' }}>{Object.keys(members).length} members · team-wide channel</div>
+                </div>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                  {Object.keys(members).slice(0, 5).map(k => <Avatar key={k} k={k} size={24} />)}
+                </div>
+              </div>
+
+              <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {loading ? (
+                  <div style={{ margin: 'auto', color: '#C4C2C8', fontSize: 13 }}>Loading messages…</div>
+                ) : chatError ? (
+                  <div style={{ margin: 'auto', textAlign: 'center', color: '#918E98' }}>
+                    <AlertCircle size={32} style={{ opacity: 0.4, marginBottom: 8, color: COLORS.amber }} />
+                    <div style={{ fontSize: 13, marginBottom: 12, maxWidth: 280, lineHeight: 1.5 }}>{chatError}</div>
+                    <button onClick={loadHistory} style={{ fontSize: 12, padding: '6px 16px', borderRadius: 6, border: `1px solid ${COLORS.burg}`, background: 'transparent', color: COLORS.burg, cursor: 'pointer' }}>Retry</button>
+                  </div>
+                ) : messages.length === 0 ? (
+                  <div style={{ margin: 'auto', textAlign: 'center', color: '#C4C2C8' }}>
+                    <MessageSquare size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
+                    <div style={{ fontSize: 13 }}>No messages yet — say hello 👋</div>
+                  </div>
+                ) : (
+                  dateSeparated(messages).map((item, i) => item.type === 'date' ? (
+                    <div key={`d${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '12px 0 8px' }}>
+                      <div style={{ flex: 1, height: 1, background: '#E2E0E5' }} />
+                      <span style={{ fontSize: 10, color: '#C4C2C8', textTransform: 'uppercase', letterSpacing: 0.6, whiteSpace: 'nowrap' }}>{item.label}</span>
+                      <div style={{ flex: 1, height: 1, background: '#E2E0E5' }} />
+                    </div>
+                  ) : (
+                    <Bubble key={item.id} item={item} own={item.user_id === authUser?.id}
+                      showName={item.user_id !== authUser?.id}
+                      content={renderContent(item.content, item.user_id === authUser?.id)}
+                      readers={getReaders(item.id)} />
+                  ))
+                )}
+                <div ref={bottomRef} />
+              </div>
+
+              <div style={{ padding: '12px 20px', borderTop: '1px solid #E2E0E5', background: '#fff', position: 'relative' }}>
+                {mentionPick && mentionList.length > 0 && (
+                  <div style={{ position: 'absolute', bottom: 'calc(100% + 4px)', left: 20, right: 20, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.12)', border: '1px solid #E2E0E5', overflow: 'hidden', zIndex: 100 }}>
+                    <div style={{ padding: '6px 12px 4px', fontSize: 10, color: '#918E98', textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: '1px solid #F4F3F5' }}>Mention a team member</div>
+                    {mentionList.map(u => (
+                      <div key={u.id} onMouseDown={e => { e.preventDefault(); insertMention(u); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
+                        onMouseEnter={e => e.currentTarget.style.background = COLORS.burgDim}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                        <Avatar k={u.initials} size={26} />
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.charcoal }}>{u.name.split(' ')[0]}</div>
+                          <div style={{ fontSize: 11, color: '#918E98' }}>{u.job_title}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+                  <Avatar k={authUser?.initials || 'SO'} size={32} style={{ flexShrink: 0, marginBottom: 1 }} />
+                  <div style={{ flex: 1 }}>
+                    <textarea ref={textareaRef} value={text} onChange={handleTextChange} onBlur={() => setMentionPick(null)}
+                      onKeyDown={e => {
+                        if (mentionPick && mentionList.length > 0) {
+                          if (e.key === 'Escape') { e.preventDefault(); setMentionPick(null); return; }
+                          if (e.key === 'Enter')  { e.preventDefault(); insertMention(mentionList[0]); return; }
+                        }
+                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+                      }}
+                      placeholder="Message the team… (@ to mention, Enter to send, Shift+Enter for new line)"
+                      rows={2} style={{ ...inputStyle, resize: 'none', fontSize: 13, padding: '9px 12px', width: '100%', boxSizing: 'border-box' }} />
+                  </div>
+                  <button onClick={handleSend} disabled={!text.trim() || !socket} title="Send"
+                    style={{ width: 38, height: 38, borderRadius: 10, flexShrink: 0, marginBottom: 1, background: text.trim() && socket ? COLORS.burg : '#E2E0E5', border: 'none', cursor: text.trim() && socket ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s' }}>
+                    <Send size={16} color={text.trim() && socket ? '#fff' : '#C4C2C8'} />
+                  </button>
+                </div>
+              </div>
             </div>
           ) : (
-            grouped.map((item, i) => item.type === 'date' ? (
-              // ── Date separator ──
-              <div key={`d${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '12px 0 8px' }}>
-                <div style={{ flex: 1, height: 1, background: '#E2E0E5' }} />
-                <span style={{ fontSize: 10, color: '#C4C2C8', textTransform: 'uppercase', letterSpacing: 0.6, whiteSpace: 'nowrap' }}>{item.label}</span>
-                <div style={{ flex: 1, height: 1, background: '#E2E0E5' }} />
-              </div>
-            ) : (
-              // ── Chat bubble ──
-              <div key={item.id} style={{ display: 'flex', gap: 9, alignItems: 'flex-end', flexDirection: isOwn(item) ? 'row-reverse' : 'row', marginBottom: 6 }}>
-                {!isOwn(item) && <Avatar k={item.initials} size={28} style={{ flexShrink: 0 }} />}
-                <div style={{ maxWidth: '68%' }}>
-                  {!isOwn(item) && (
-                    <div style={{ fontSize: 11, color: '#918E98', marginBottom: 3, marginLeft: 4 }}>{item.name}</div>
-                  )}
-                  <div style={{
-                    padding: '9px 13px', borderRadius: isOwn(item) ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
-                    background: isOwn(item) ? COLORS.burg : '#F4F3F5',
-                    color: isOwn(item) ? '#fff' : '#2A2829',
-                    fontSize: 13, lineHeight: 1.5,
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-                  }}>
-                    {renderContent(item.content, isOwn(item))}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3, justifyContent: isOwn(item) ? 'flex-end' : 'flex-start', marginLeft: isOwn(item) ? 0 : 4 }}>
-                    <span style={{ fontSize: 10, color: '#C4C2C8' }}>{fmt(item.created_at)}</span>
-                    {isOwn(item) && (() => {
-                      const readers = getReaders(item.id);
-                      return readers.length > 0 ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          <span style={{ fontSize: 9, color: '#22A55A', fontWeight: 500 }}>Seen</span>
-                          {readers.map(r => (
-                            <Avatar key={r.user_id} k={r.initials} size={13} title={`Read by ${MEMBER_NAMES[r.initials] || r.initials}`} style={{ border: '1px solid #fff' }} />
-                          ))}
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: 9, color: '#C4C2C8' }}>✓ Sent</span>
-                      );
-                    })()}
+            /* ── DM conversation ── */
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ padding: '12px 20px', borderBottom: '1px solid #E2E0E5', display: 'flex', alignItems: 'center', gap: 10, background: '#fff' }}>
+                {isMobile && (
+                  <button onClick={() => { setActiveDM(null); setMobileShowConv(false); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.burg, padding: '0 4px 0 0', display: 'flex', alignItems: 'center' }}>
+                    <ChevronLeft size={20} />
+                  </button>
+                )}
+                <div style={{ position: 'relative' }}>
+                  <Avatar k={activeDM.initials} size={34} />
+                  {onlineUserIds.has(activeDM.userId) && <div style={{ position: 'absolute', bottom: 1, right: 1, width: 9, height: 9, borderRadius: '50%', background: COLORS.green, border: '2px solid #fff' }} />}
+                </div>
+                <div>
+                  <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 14, fontWeight: 700, color: COLORS.charcoal }}>{activeDM.name}</div>
+                  <div style={{ fontSize: 11, color: onlineUserIds.has(activeDM.userId) ? COLORS.green : '#918E98' }}>
+                    {onlineUserIds.has(activeDM.userId) ? 'Online' : 'Offline'}
                   </div>
                 </div>
               </div>
-            ))
-          )}
-          {/* Invisible anchor — scrolled into view on new messages */}
-          <div ref={bottomRef} />
-        </div>
 
-        {/* ── Message input ── */}
-        <div style={{ padding: '12px 20px', borderTop: '1px solid #E2E0E5', background: '#fff', position: 'relative' }}>
-          {/* ── @mention picker ── */}
-          {mentionPick && mentionList.length > 0 && (
-            <div style={{
-              position: 'absolute', bottom: 'calc(100% + 4px)', left: 20, right: 20,
-              background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-              border: '1px solid #E2E0E5', overflow: 'hidden', zIndex: 100,
-            }}>
-              <div style={{ padding: '6px 12px 4px', fontSize: 10, color: '#918E98', textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: '1px solid #F4F3F5' }}>
-                Mention a team member
-              </div>
-              {mentionList.map(u => (
-                <div key={u.id}
-                  onMouseDown={e => { e.preventDefault(); insertMention(u); }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
-                  onMouseEnter={e => e.currentTarget.style.background = COLORS.burgDim}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                >
-                  <Avatar k={u.initials} size={26} />
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.charcoal }}>{u.name.split(' ')[0]}</div>
-                    <div style={{ fontSize: 11, color: '#918E98' }}>{u.job_title}</div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {dmLoading ? (
+                  <div style={{ margin: 'auto', color: '#C4C2C8', fontSize: 13 }}>Loading…</div>
+                ) : dmError ? (
+                  <div style={{ margin: 'auto', textAlign: 'center', color: '#918E98', fontSize: 13 }}>{dmError}</div>
+                ) : dmMessages.length === 0 ? (
+                  <div style={{ margin: 'auto', textAlign: 'center', color: '#C4C2C8' }}>
+                    <MessageSquare size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
+                    <div style={{ fontSize: 13 }}>No messages yet — say hi!</div>
                   </div>
+                ) : (
+                  dateSeparated(dmMessages).map((item, i) => item.type === 'date' ? (
+                    <div key={`dd${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '12px 0 8px' }}>
+                      <div style={{ flex: 1, height: 1, background: '#E2E0E5' }} />
+                      <span style={{ fontSize: 10, color: '#C4C2C8', textTransform: 'uppercase', letterSpacing: 0.6, whiteSpace: 'nowrap' }}>{item.label}</span>
+                      <div style={{ flex: 1, height: 1, background: '#E2E0E5' }} />
+                    </div>
+                  ) : (
+                    <Bubble key={item.id} item={item} own={dmIsOwn(item)}
+                      showName={false} content={item.content} readers={undefined} />
+                  ))
+                )}
+                <div ref={dmBottomRef} />
+              </div>
+
+              <div style={{ padding: '12px 20px', borderTop: '1px solid #E2E0E5', background: '#fff' }}>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+                  <Avatar k={authUser?.initials || 'SO'} size={32} style={{ flexShrink: 0, marginBottom: 1 }} />
+                  <div style={{ flex: 1 }}>
+                    <textarea ref={dmTextareaRef} value={dmText} onChange={e => setDmText(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleDMSend(); } }}
+                      placeholder={`Message ${activeDM.name.split(' ')[0]}… (Enter to send)`}
+                      rows={2} style={{ ...inputStyle, resize: 'none', fontSize: 13, padding: '9px 12px', width: '100%', boxSizing: 'border-box' }} />
+                  </div>
+                  <button onClick={handleDMSend} disabled={!dmText.trim() || !socket} title="Send"
+                    style={{ width: 38, height: 38, borderRadius: 10, flexShrink: 0, marginBottom: 1, background: dmText.trim() && socket ? COLORS.burg : '#E2E0E5', border: 'none', cursor: dmText.trim() && socket ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s' }}>
+                    <Send size={16} color={dmText.trim() && socket ? '#fff' : '#C4C2C8'} />
+                  </button>
                 </div>
-              ))}
+              </div>
             </div>
-          )}
-          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
-            <Avatar k={authUser?.initials || 'SO'} size={32} style={{ flexShrink: 0, marginBottom: 1 }} />
-            <div style={{ flex: 1 }}>
-              <textarea
-                ref={textareaRef}
-                value={text}
-                onChange={handleTextChange}
-                onBlur={() => setMentionPick(null)}
-                onKeyDown={e => {
-                  if (mentionPick && mentionList.length > 0) {
-                    if (e.key === 'Escape') { e.preventDefault(); setMentionPick(null); return; }
-                    if (e.key === 'Enter')  { e.preventDefault(); insertMention(mentionList[0]); return; }
-                  }
-                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
-                }}
-                placeholder="Message the team… (@ to mention, Enter to send, Shift+Enter for new line)"
-                rows={2}
-                style={{ ...inputStyle, resize: 'none', fontSize: 13, padding: '9px 12px', width: '100%', boxSizing: 'border-box' }}
-              />
-            </div>
-            <button
-              onClick={handleSend}
-              disabled={!text.trim() || !socket}
-              title="Send message"
-              style={{
-                width: 38, height: 38, borderRadius: 10, flexShrink: 0, marginBottom: 1,
-                background: text.trim() && socket ? COLORS.burg : '#E2E0E5',
-                border: 'none', cursor: text.trim() && socket ? 'pointer' : 'not-allowed',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'background .15s',
-              }}
-            >
-              <Send size={16} color={text.trim() && socket ? '#fff' : '#C4C2C8'} />
-            </button>
-          </div>
-        </div>
+          )
+        )}
       </div>
     );
   };

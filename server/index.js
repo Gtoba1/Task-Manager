@@ -145,6 +145,27 @@ io.on('connection', (socket) => {
       };
       // Broadcast to ALL connected clients (including sender)
       io.emit('chat:message', msg);
+
+      // Notify @mentioned users
+      const rawMentions = content.match(/@(\w+)/g) || [];
+      const uniqueNames = [...new Set(rawMentions.map(m => m.slice(1).toLowerCase()))];
+      for (const firstName of uniqueNames) {
+        const mentionedResult = await pool.query(
+          `SELECT id FROM users WHERE LOWER(SPLIT_PART(name, ' ', 1)) = $1 AND id != $2`,
+          [firstName, u.id]
+        );
+        for (const row of mentionedResult.rows) {
+          const preview = content.length > 60 ? content.slice(0, 60) + '…' : content;
+          await pool.query(
+            'INSERT INTO notifications (user_id, message) VALUES ($1, $2)',
+            [row.id, `${u.name} mentioned you in chat: "${preview}"`]
+          );
+          io.to(`user:${row.id}`).emit('notify:receive', {
+            title: `${u.name} mentioned you`,
+            body:  preview,
+          });
+        }
+      }
     } catch (err) {
       console.error('chat:send error:', err.message);
     }

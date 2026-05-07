@@ -1607,6 +1607,8 @@ export default function App() {
     // instead of a silent empty state when the server is waking from sleep.
     const [chatError, setChatError]   = useState(null);
     const bottomRef                   = useRef(null); // used to auto-scroll to latest message
+    const textareaRef = useRef(null);
+    const [mentionPick, setMentionPick] = useState(null); // null | { query: string, anchor: number }
 
     // Returns the list of OTHER users who have read message `msgId`
     const getReaders = (msgId) =>
@@ -1677,10 +1679,42 @@ export default function App() {
     }, [messages]);
 
     const handleSend = () => {
+      if (mentionPick && mentionList.length > 0) { insertMention(mentionList[0]); return; }
       if (!text.trim() || !socket) return;
       socket.emit('chat:send', { content: text.trim() });
       setText('');
+      setMentionPick(null);
     };
+
+    const handleTextChange = (e) => {
+      const val = e.target.value;
+      const pos = e.target.selectionStart;
+      setText(val);
+      const before = val.slice(0, pos);
+      const atIdx  = before.lastIndexOf('@');
+      if (atIdx >= 0) {
+        const query = before.slice(atIdx + 1);
+        if (!query.includes(' ') && query.length <= 20) {
+          setMentionPick({ query, anchor: atIdx });
+          return;
+        }
+      }
+      setMentionPick(null);
+    };
+
+    const insertMention = (user) => {
+      if (!mentionPick) return;
+      const firstName = user.name.split(' ')[0];
+      const before = text.slice(0, mentionPick.anchor);
+      const after  = text.slice(mentionPick.anchor + 1 + mentionPick.query.length);
+      setText(`${before}@${firstName} ${after}`);
+      setMentionPick(null);
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    };
+
+    const mentionList = mentionPick
+      ? rawUsers.filter(u => u.name.split(' ')[0].toLowerCase().startsWith(mentionPick.query.toLowerCase()))
+      : [];
 
     const fmt = iso => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     const fmtDate = iso => new Date(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -1694,6 +1728,23 @@ export default function App() {
     }, []);
 
     const isOwn = (msg) => msg.user_id === authUser?.id;
+
+    const renderContent = (content, own) => {
+      const parts = content.split(/(@\w+)/g);
+      const firstNames = new Set(rawUsers.map(u => u.name.split(' ')[0].toLowerCase()));
+      return parts.map((part, i) => {
+        if (part.startsWith('@') && firstNames.has(part.slice(1).toLowerCase())) {
+          return (
+            <span key={i} style={{
+              background: own ? 'rgba(255,255,255,0.2)' : COLORS.burgDim,
+              color: own ? '#fff' : COLORS.burg,
+              borderRadius: 4, padding: '0 3px', fontWeight: 600,
+            }}>{part}</span>
+          );
+        }
+        return part;
+      });
+    };
 
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -1751,7 +1802,7 @@ export default function App() {
                     fontSize: 13, lineHeight: 1.5,
                     boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
                   }}>
-                    {item.content}
+                    {renderContent(item.content, isOwn(item))}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3, justifyContent: isOwn(item) ? 'flex-end' : 'flex-start', marginLeft: isOwn(item) ? 0 : 4 }}>
                     <span style={{ fontSize: 10, color: '#C4C2C8' }}>{fmt(item.created_at)}</span>
@@ -1778,15 +1829,49 @@ export default function App() {
         </div>
 
         {/* ── Message input ── */}
-        <div style={{ padding: '12px 20px', borderTop: '1px solid #E2E0E5', background: '#fff' }}>
+        <div style={{ padding: '12px 20px', borderTop: '1px solid #E2E0E5', background: '#fff', position: 'relative' }}>
+          {/* ── @mention picker ── */}
+          {mentionPick && mentionList.length > 0 && (
+            <div style={{
+              position: 'absolute', bottom: 'calc(100% + 4px)', left: 20, right: 20,
+              background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+              border: '1px solid #E2E0E5', overflow: 'hidden', zIndex: 100,
+            }}>
+              <div style={{ padding: '6px 12px 4px', fontSize: 10, color: '#918E98', textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: '1px solid #F4F3F5' }}>
+                Mention a team member
+              </div>
+              {mentionList.map(u => (
+                <div key={u.id}
+                  onMouseDown={e => { e.preventDefault(); insertMention(u); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
+                  onMouseEnter={e => e.currentTarget.style.background = COLORS.burgDim}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  <Avatar k={u.initials} size={26} />
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.charcoal }}>{u.name.split(' ')[0]}</div>
+                    <div style={{ fontSize: 11, color: '#918E98' }}>{u.job_title}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
             <Avatar k={authUser?.initials || 'SO'} size={32} style={{ flexShrink: 0, marginBottom: 1 }} />
             <div style={{ flex: 1 }}>
               <textarea
+                ref={textareaRef}
                 value={text}
-                onChange={e => setText(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                placeholder="Message the team… (Enter to send, Shift+Enter for new line)"
+                onChange={handleTextChange}
+                onBlur={() => setMentionPick(null)}
+                onKeyDown={e => {
+                  if (mentionPick && mentionList.length > 0) {
+                    if (e.key === 'Escape') { e.preventDefault(); setMentionPick(null); return; }
+                    if (e.key === 'Enter')  { e.preventDefault(); insertMention(mentionList[0]); return; }
+                  }
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+                }}
+                placeholder="Message the team… (@ to mention, Enter to send, Shift+Enter for new line)"
                 rows={2}
                 style={{ ...inputStyle, resize: 'none', fontSize: 13, padding: '9px 12px', width: '100%', boxSizing: 'border-box' }}
               />

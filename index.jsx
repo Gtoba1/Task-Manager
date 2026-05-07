@@ -262,6 +262,8 @@ export default function App() {
   const [dragId, setDragId]               = useState(null);
   const [unreadChat, setUnreadChat]        = useState(0);
   const [unreadDM, setUnreadDM]            = useState({}); // { [senderId]: count }
+  const [activeDM, setActiveDM]            = useState(null); // persisted at App level so ChatView remounts don't reset it
+  const [mobileShowConv, setMobileShowConv] = useState(false);
   const [unreadNotifs, setUnreadNotifs]    = useState(0);
   const [onlineUserIds, setOnlineUserIds]  = useState(new Set()); // real-time presence
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -390,6 +392,7 @@ export default function App() {
     setActiveTaskId(null);
     setMobileSidebarOpen(false); // close drawer on mobile after navigation
     if (id === 'chat')   setUnreadChat(0);
+    if (id !== 'chat') { setActiveDM(null); setMobileShowConv(false); } // reset chat nav when leaving
     if (id === 'notifs') setUnreadNotifs(0);
   }, []);
 
@@ -1633,8 +1636,7 @@ export default function App() {
     const [mentionPick, setMentionPick] = useState(null);
 
     // ── DM state ─────────────────────────────────────────────────
-    const [activeDM, setActiveDM]       = useState(null); // null | { userId, name, initials }
-    const [mobileShowConv, setMobileShowConv] = useState(false); // mobile: show right panel
+    // activeDM and mobileShowConv live in App state (above) so they survive ChatView remounts
     const [dmMessages, setDmMessages] = useState([]);
     const [dmText, setDmText]         = useState('');
     const [dmLoading, setDmLoading]   = useState(false);
@@ -2529,6 +2531,13 @@ export default function App() {
                     onChange={e => { setConfirm(e.target.value); setPassError(''); }}
                     placeholder="Type again to confirm"
                   />
+                  {confirmPass.length > 0 && (
+                    <div style={{ marginTop: 4, fontSize: 11, display: 'flex', alignItems: 'center', gap: 4,
+                      color: confirmPass === newPass ? '#22A55A' : '#D63B3B' }}>
+                      <span>{confirmPass === newPass ? '✓' : '✗'}</span>
+                      {confirmPass === newPass ? 'Passwords match' : 'Passwords do not match'}
+                    </div>
+                  )}
                 </FormField>
                 {/* Live requirements checklist — only shown when user changes their own password */}
                 {isSelf && newPass.length > 0 && (

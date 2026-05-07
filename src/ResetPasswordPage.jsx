@@ -183,6 +183,13 @@ export default function ResetPasswordPage({ token }) {
                       {showConf ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
+                  {confirm.length > 0 && (
+                    <div style={{ marginTop: 6, fontSize: 12, display: 'flex', alignItems: 'center', gap: 4,
+                      color: confirm === password ? '#22A55A' : '#D63B3B' }}>
+                      <span>{confirm === password ? '✓' : '✗'}</span>
+                      {confirm === password ? 'Passwords match' : 'Passwords do not match'}
+                    </div>
+                  )}
                 </div>
 
                 {error && (

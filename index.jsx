@@ -260,7 +260,8 @@ export default function App() {
   const [addMemberModal, setAddMemberModal] = useState(false);
   const [resetPassModal, setResetPassModal] = useState(null); // { userId, userName, initials }
   const [dragId, setDragId]               = useState(null);
-  const [unreadChat, setUnreadChat]        = useState(0);    // badge on Team Chat nav item
+  const [unreadChat, setUnreadChat]        = useState(0);
+  const [unreadNotifs, setUnreadNotifs]    = useState(0);
   const [onlineUserIds, setOnlineUserIds]  = useState(new Set()); // real-time presence
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [windowWidth, setWindowWidth]     = useState(window.innerWidth);
@@ -311,6 +312,13 @@ export default function App() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // ── Load initial unread notification count ─────────────────
+  useEffect(() => {
+    API.getNotifications()
+      .then(res => setUnreadNotifs((res.data.notifications || []).filter(n => !n.is_read).length))
+      .catch(() => {});
+  }, []);
+
   // ── Window resize — track mobile breakpoint ────────────────
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -319,12 +327,13 @@ export default function App() {
   }, []);
   const isMobile = windowWidth < 768;
 
-  // ── In-app toast notifications ────────────────────────────
+  // ── In-app toast notifications + unread badge increment ─────
   useEffect(() => {
     const handler = (e) => {
       const toast = { id: Date.now(), ...e.detail };
       setToasts(t => [...t, toast]);
       setTimeout(() => setToasts(t => t.filter(x => x.id !== toast.id)), 5000);
+      setUnreadNotifs(n => n + 1);
     };
     window.addEventListener('app:notify', handler);
     return () => window.removeEventListener('app:notify', handler);
@@ -358,7 +367,8 @@ export default function App() {
     setView(id);
     setActiveTaskId(null);
     setMobileSidebarOpen(false); // close drawer on mobile after navigation
-    if (id === 'chat') setUnreadChat(0); // clear badge when opening chat
+    if (id === 'chat')   setUnreadChat(0);
+    if (id === 'notifs') setUnreadNotifs(0);
   }, []);
 
   // Show a loading screen while the first data fetch is in progress
@@ -616,7 +626,7 @@ export default function App() {
             if (item.section) return <div key={i} style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', padding: '10px 8px 6px', fontWeight: 500 }}>{item.section}</div>;
             const active = view === item.id;
             const Icon = item.icon;
-            const badgeVal = item.badge === 'camps' ? projects.length : item.badge === 'tasks' ? openTasks : item.badge === 'notifs' ? null : item.badge === 'chat' && unreadChat > 0 ? unreadChat : null;
+            const badgeVal = item.badge === 'camps' ? projects.length : item.badge === 'tasks' ? openTasks : item.badge === 'notifs' && unreadNotifs > 0 ? unreadNotifs : item.badge === 'chat' && unreadChat > 0 ? unreadChat : null;
             return (
               <div key={item.id} onClick={() => goNav(item.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', color: active ? '#fff' : 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 1, background: active ? 'rgba(255,255,255,0.18)' : 'transparent', fontWeight: active ? 500 : 400 }}>
                 <Icon size={16} style={{ opacity: active ? 1 : 0.7 }} />
@@ -1519,16 +1529,37 @@ export default function App() {
       try {
         await API.markAllRead();
         setNotifs(ns => ns.map(n => ({ ...n, is_read: true })));
+        setUnreadNotifs(0);
       } catch (err) {
         console.error('Mark all read failed:', err.message);
       }
+    };
+
+    const handleClick = async (n) => {
+      // Mark as read
+      if (!n.is_read) {
+        setNotifs(ns => ns.map(x => x.id === n.id ? { ...x, is_read: true } : x));
+        setUnreadNotifs(c => Math.max(0, c - 1));
+        API.markOneRead(n.id).catch(() => {});
+      }
+      // Navigate based on message content
+      const msg = (n.message || '').toLowerCase();
+      if (msg.includes('task'))    goNav('tasks');
+      else if (msg.includes('project')) goNav('projects');
+    };
+
+    const getIcon = (msg = '') => {
+      const m = msg.toLowerCase();
+      if (m.includes('task'))    return '📋';
+      if (m.includes('project')) return '📁';
+      return '🔔';
     };
 
     return (
       <div style={{ flex: 1, overflowY: 'auto', padding: 20, maxWidth: 680 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
           <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, color: COLORS.charcoal }}>Notifications</h2>
-          {unreadCount > 0 && <span style={{ background: COLORS.burg, color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 20, padding: '1px 6px' }}>{unreadCount}</span>}
+          {unreadCount > 0 && <span style={{ background: COLORS.burg, color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 20, padding: '2px 7px' }}>{unreadCount} unread</span>}
           <div style={{ marginLeft: 'auto' }}>
             {unreadCount > 0 && <Btn sm onClick={handleMarkAllRead}>Mark all read</Btn>}
           </div>
@@ -1539,15 +1570,24 @@ export default function App() {
           <div style={{ textAlign: 'center', padding: '48px 0', color: '#918E98' }}>
             <Bell size={32} style={{ opacity: 0.3, display: 'block', margin: '0 auto 12px' }} />
             <div style={{ fontSize: 14 }}>No notifications yet.</div>
-            <div style={{ fontSize: 12, marginTop: 4 }}>You'll see updates here when tasks are moved, assigned, or commented on.</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>You'll see updates here when tasks or projects are assigned to you.</div>
           </div>
         ) : notifs.map((n, i) => (
-          <div key={n.id || i} style={{ display: 'flex', gap: 9, padding: '10px 12px', borderRadius: 6, background: !n.is_read ? COLORS.burgDim : 'transparent', marginBottom: 4 }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: !n.is_read ? COLORS.burg : 'transparent', flexShrink: 0, marginTop: 5 }} />
+          <div key={n.id || i} onClick={() => handleClick(n)}
+            style={{ display: 'flex', gap: 12, padding: '12px 14px', borderRadius: 8, marginBottom: 6, cursor: 'pointer', transition: 'background .15s',
+              background: !n.is_read ? COLORS.burgDim : '#F9F8FA',
+              border: `1px solid ${!n.is_read ? '#E8C8CB' : '#ECEAED'}`,
+            }}>
+            {/* Unread dot */}
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: !n.is_read ? COLORS.burg : 'transparent', flexShrink: 0, marginTop: 4 }} />
+            {/* Icon */}
+            <div style={{ fontSize: 16, flexShrink: 0 }}>{getIcon(n.message)}</div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, color: '#2A2829', marginBottom: 2, lineHeight: 1.4 }}>{n.message}</div>
-              <div style={{ fontSize: 10, color: '#918E98' }}>{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</div>
+              <div style={{ fontSize: 13, color: '#2A2829', marginBottom: 3, lineHeight: 1.5, fontWeight: !n.is_read ? 600 : 400 }}>{n.message}</div>
+              <div style={{ fontSize: 11, color: '#918E98' }}>{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</div>
             </div>
+            {/* Navigate arrow */}
+            <div style={{ fontSize: 12, color: '#918E98', alignSelf: 'center', flexShrink: 0 }}>→</div>
           </div>
         ))}
       </div>
